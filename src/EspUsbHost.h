@@ -6,6 +6,9 @@
 #include <class/hid/hid.h>
 #include <rom/usb/usb_common.h>
 
+// キーコードがレポートに含まれているかチェックするヘルパー関数
+bool keyInReport(const hid_keyboard_report_t &report, uint8_t keycode);
+
 class EspUsbHost {
 public:
   bool isReady = false;

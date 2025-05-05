@@ -23,6 +23,11 @@ void LEDController::begin() {
 }
 
 void LEDController::keyPressed() {
+    // シリアルにデバッグ出力を追加
+    Serial.println("LED: Key pressed!");
+    
+    // LEDを確実にONにする
+    pinMode(INTERNAL_LED_PIN, OUTPUT); // 念のためピンモードを再設定
     digitalWrite(INTERNAL_LED_PIN, HIGH);
     lastKeyPressTime = millis();
 }
@@ -100,6 +105,11 @@ void SpeakerController::noTone() {
 
 void SpeakerController::playKeySound() {
     #if SOUND_ENABLED
+    // デバッグ出力を追加
+    Serial.println("SPEAKER: Playing key sound");
+    
+    // 確実に音を鳴らすために念のためpinModeを再設定
+    pinMode(BUZZER_PIN, OUTPUT);
     tone(KEY_FREQ, KEY_DURATION);
     #endif
 }

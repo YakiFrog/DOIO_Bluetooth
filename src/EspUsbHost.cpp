@@ -525,7 +525,8 @@ void EspUsbHost::_onReceive(usb_transfer_t *transfer) {
   EspUsbHost *usbHost = (EspUsbHost *)transfer->context;
   endpoint_data_t *endpoint_data = &usbHost->endpoint_data_list[(transfer->bEndpointAddress & USB_B_ENDPOINT_ADDRESS_EP_NUM_MASK)];
 
-  // デバッグ出力を常に行うように修正
+  // デバッグ出力
+  #if (defined(USB_DEBUG_DETAIL) && USB_DEBUG_DETAIL == 1)
   {
     String buffer_str = "";
     for (int i = 0; i < transfer->actual_num_bytes; i++) {
@@ -535,131 +536,142 @@ void EspUsbHost::_onReceive(usb_transfer_t *transfer) {
       buffer_str += String(transfer->data_buffer[i], HEX) + " ";
     }
     buffer_str.trim();
-    ESP_LOGI("EspUsbHost", "受信データ: EP=0x%x Class=0x%x SubClass=0x%x Protocol=0x%x Data=[%s]",
+    Serial.printf("USB受信データ: EP=0x%x Class=0x%x SubClass=0x%x Protocol=0x%x Data=[%s]\n",
            transfer->bEndpointAddress,
            endpoint_data->bInterfaceClass,
            endpoint_data->bInterfaceSubClass,
            endpoint_data->bInterfaceProtocol,
            buffer_str.c_str());
   }
-
-#if (ARDUHAL_LOG_LEVEL >= ARDUHAL_LOG_LEVEL_VERBOSE)
-  _printPcapText("URB_INTERRUPT in", 0x0009, 0x01, transfer->bEndpointAddress, 0x01, transfer->actual_num_bytes, 0xff, (const uint8_t *)transfer->data_buffer);
-
-  String buffer_str = "";
-  for (int i = 0; i < transfer->actual_num_bytes; i++) {
-    if (transfer->data_buffer[i] < 16) {
-      buffer_str += "0";
-    }
-    buffer_str += String(transfer->data_buffer[i], HEX) + " ";
-  }
-  buffer_str.trim();
-  ESP_LOGV("EspUsbHost", "transfer\n"
-                         "# bInterfaceClass    = 0x%x\n"
-                         "# bInterfaceSubClass = 0x%x\n"
-                         "# bInterfaceProtocol = 0x%x\n"
-                         "# bCountryCode       = 0x%x > usb_transfer_t data_buffer=[%s]\n"
-                         "# data_buffer_size   = %d\n"
-                         "# num_bytes          = %d\n"
-                         "# actual_num_bytes   = %d\n"
-                         "# flags              = 0x%x\n"
-                         "# bEndpointAddress   = 0x%x\n"
-                         "# timeout_ms         = %d\n"
-                         "# num_isoc_packets   = %d",
-           endpoint_data->bInterfaceClass,
-           endpoint_data->bInterfaceSubClass,
-           endpoint_data->bInterfaceProtocol,
-           endpoint_data->bCountryCode,
-           buffer_str.c_str(),
-           transfer->data_buffer_size,
-           transfer->num_bytes,
-           transfer->actual_num_bytes,
-           transfer->flags,
-           transfer->bEndpointAddress,
-           transfer->timeout_ms,
-           transfer->num_isoc_packets);
-#endif
+  #endif
 
   if (endpoint_data->bInterfaceClass == USB_CLASS_HID) {
     // HIDデバイス検出をデバッグ表示
-    ESP_LOGI("EspUsbHost", "HIDデバイス検出: SubClass=0x%x Protocol=0x%x", 
+    #if DEBUG_OUTPUT
+    Serial.printf("HIDデバイス入力: SubClass=0x%x Protocol=0x%x\n", 
              endpoint_data->bInterfaceSubClass, 
              endpoint_data->bInterfaceProtocol);
+    #endif
 
     if (endpoint_data->bInterfaceSubClass == HID_SUBCLASS_BOOT) {
       if (endpoint_data->bInterfaceProtocol == HID_ITF_PROTOCOL_KEYBOARD) {
-        ESP_LOGI("EspUsbHost", "キーボード入力検出！");
+        #if DEBUG_OUTPUT
+        Serial.println("キーボード入力検出！");
+        #endif
+        
         static hid_keyboard_report_t last_report = {};
 
-        if (transfer->data_buffer[2] == HID_KEY_NUM_LOCK) {
-          // HID_KEY_NUM_LOCK TODO!
-          ESP_LOGI("EspUsbHost", "NumLock検出");
-        } else if (memcmp(&last_report, transfer->data_buffer, sizeof(last_report))) {
-          // chenge
-          ESP_LOGI("EspUsbHost", "キーボード状態変化検出");
+        // HID_KEY_NUM_LOCKの特別処理
+        if (transfer->actual_num_bytes > 2 && transfer->data_buffer[2] == HID_KEY_NUM_LOCK) {
+          #if DEBUG_OUTPUT
+          Serial.println("NumLock検出");
+          #endif
+        } 
+        else {
+          // キーボードレポートの作成
           hid_keyboard_report_t report = {};
-          report.modifier = transfer->data_buffer[0];
-          report.reserved = transfer->data_buffer[1];
-          report.keycode[0] = transfer->data_buffer[2];
-          report.keycode[1] = transfer->data_buffer[3];
-          report.keycode[2] = transfer->data_buffer[4];
-          report.keycode[3] = transfer->data_buffer[5];
-          report.keycode[4] = transfer->data_buffer[6];
-          report.keycode[5] = transfer->data_buffer[7];
-
-          // キーコード表示
-          ESP_LOGI("EspUsbHost", "キーコード: [%02x %02x %02x %02x %02x %02x] modifier: %02x",
-                  report.keycode[0], report.keycode[1], report.keycode[2],
-                  report.keycode[3], report.keycode[4], report.keycode[5],
-                  report.modifier);
-
-          usbHost->onKeyboard(report, last_report);
-
-          bool shift = (report.modifier & KEYBOARD_MODIFIER_LEFTSHIFT) || (report.modifier & KEYBOARD_MODIFIER_RIGHTSHIFT);
-          for (int i = 0; i < 6; i++) {
-            if (report.keycode[i] != 0 && last_report.keycode[i] == 0) {
-              // Type
-              uint8_t ascii = usbHost->getKeycodeToAscii(report.keycode[i], shift);
-              ESP_LOGI("EspUsbHost", "キー入力: ASCII=0x%02x, keycode=0x%02x, shift=%d", 
-                      ascii, report.keycode[i], shift);
-              usbHost->onKeyboardKey(ascii, report.keycode[i], shift);
+          
+          // データが少なくとも8バイトあることを確認
+          if (transfer->actual_num_bytes >= 8) {
+            report.modifier = transfer->data_buffer[0];
+            report.reserved = transfer->data_buffer[1];
+            report.keycode[0] = transfer->data_buffer[2];
+            report.keycode[1] = transfer->data_buffer[3];
+            report.keycode[2] = transfer->data_buffer[4];
+            report.keycode[3] = transfer->data_buffer[5];
+            report.keycode[4] = transfer->data_buffer[6];
+            report.keycode[5] = transfer->data_buffer[7];
+          } else {
+            // データが少ない場合は、利用可能なバイトだけコピー
+            report.modifier = transfer->data_buffer[0];
+            // 安全のため残りをゼロで初期化
+            for (int i = 1; i < transfer->actual_num_bytes; i++) {
+              ((uint8_t*)&report)[i] = transfer->data_buffer[i];
             }
           }
 
+          // キーコードの表示
+          #if DEBUG_OUTPUT
+          Serial.printf("キーコード: [%02x %02x %02x %02x %02x %02x] modifier: %02x\n",
+                  report.keycode[0], report.keycode[1], report.keycode[2],
+                  report.keycode[3], report.keycode[4], report.keycode[5],
+                  report.modifier);
+          #endif
+
+          // キーボードイベント処理
+          usbHost->onKeyboard(report, last_report);
+
+          // シフトキーの状態を確認
+          bool shift = (report.modifier & KEYBOARD_MODIFIER_LEFTSHIFT) || 
+                      (report.modifier & KEYBOARD_MODIFIER_RIGHTSHIFT);
+          
+          // 各キーコードを処理
+          for (int i = 0; i < 6; i++) {
+            // 新しく押されたキーを検出（前回のレポートにないキー）
+            if (report.keycode[i] != 0 && !keyInReport(last_report, report.keycode[i])) {
+              uint8_t ascii = usbHost->getKeycodeToAscii(report.keycode[i], shift);
+              #if DEBUG_OUTPUT
+              Serial.printf("新しいキー: ASCII=0x%02x, keycode=0x%02x, shift=%d\n", 
+                      ascii, report.keycode[i], shift);
+              #endif
+              usbHost->onKeyboardKey(ascii, report.keycode[i], report.modifier);
+            }
+          }
+
+          // 最新のレポートを保存
           memcpy(&last_report, &report, sizeof(last_report));
         }
       } else if (endpoint_data->bInterfaceProtocol == HID_ITF_PROTOCOL_MOUSE) {
-        ESP_LOGI("EspUsbHost", "マウス入力検出");
+        #if DEBUG_OUTPUT
+        Serial.println("マウス入力検出");
+        #endif
+        
         static uint8_t last_buttons = 0;
         hid_mouse_report_t report = {};
-        report.buttons = transfer->data_buffer[0]; // 0番目がボタン状態
-        report.x = (int8_t)transfer->data_buffer[1]; // 1番目がX軸（符号付き8ビット）
-        report.y = (int8_t)transfer->data_buffer[2]; // 2番目がY軸（符号付き8ビット）
         
-        // マウスレポートが4バイト以上あれば、3番目にホイール情報がある
+        if (transfer->actual_num_bytes > 0) {
+          report.buttons = transfer->data_buffer[0]; // 0番目がボタン状態
+        }
+        
+        if (transfer->actual_num_bytes > 2) {
+          report.x = (int8_t)transfer->data_buffer[1]; // 1番目がX軸（符号付き8ビット）
+          report.y = (int8_t)transfer->data_buffer[2]; // 2番目がY軸（符号付き8ビット）
+        }
+        
+        // ホイール情報（存在する場合）
         if (transfer->actual_num_bytes > 3) {
           report.wheel = (int8_t)transfer->data_buffer[3]; // ホイールは符号付き
         }
         
-        // デバッグ出力
-        ESP_LOGI("EspUsbHost", "マウスデータ: buttons=0x%02x, x=%d, y=%d, wheel=%d", 
-               report.buttons, report.x, report.y, report.wheel);
-                
+        // マウスイベント処理
         usbHost->onMouse(report, last_buttons);
+        
+        // ボタンイベント処理
         if (report.buttons != last_buttons) {
           usbHost->onMouseButtons(report, last_buttons);
           last_buttons = report.buttons;
         }
+        
+        // 移動イベント処理
         if (report.x != 0 || report.y != 0 || report.wheel != 0) {
           usbHost->onMouseMove(report);
         }
       }
-    } else {
-      //usbHost->_onReceiveGamepad();
     }
   }
 
+  // カスタムイベントハンドラを呼び出し
   usbHost->onReceive(transfer);
+}
+
+// キーコードがレポートに含まれているかチェックするヘルパー関数
+bool keyInReport(const hid_keyboard_report_t &report, uint8_t keycode) {
+  for (int i = 0; i < 6; i++) {
+    if (report.keycode[i] == keycode) {
+      return true;
+    }
+  }
+  return false;
 }
 
 void EspUsbHost::onMouse(hid_mouse_report_t report, uint8_t last_buttons) {
@@ -791,13 +803,13 @@ uint8_t EspUsbHost::getKeycodeToAscii(uint8_t keycode, uint8_t shift) {
 void EspUsbHost::onKeyboardKey(uint8_t ascii, uint8_t keycode, uint8_t modifier) {
   if (' ' <= ascii && ascii <= '~') {
     // printable
-    ESP_LOGV("EspUsbHost", "Keyboard Type=0x%02x(%c), keycode=0x%02x, modifier=0x%02x",
+    ESP_LOGI("EspUsbHost", "Keyboard Type=0x%02x(%c), keycode=0x%02x, modifier=0x%02x",
              ascii,
              ascii,
              keycode,
              modifier);
   } else {
-    ESP_LOGV("EspUsbHost", "Keyboard Type=0x%02x, keycode=0x%02x, modifier=0x%02x",
+    ESP_LOGI("EspUsbHost", "Keyboard Type=0x%02x, keycode=0x%02x, modifier=0x%02x",
              ascii,
              keycode,
              modifier);

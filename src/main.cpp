@@ -27,10 +27,10 @@ public:
       // 内蔵LEDを点灯
       ledController.keyPressed();
       
-      // キー入力音を鳴らす
+      // キー入力音を鳴らす - BLE接続に関係なく必ず音を鳴らす
       speakerController.playKeySound();
       
-      // BLEでキーを送信(キー押下)
+      // BLEでキーを送信(キー押下) - BLE接続時のみ
       forwardKeyToBle(keycode, modifier, true);
       
       if (' ' <= ascii && ascii <= '~') {
@@ -90,8 +90,8 @@ public:
             break;
           default:
             // 不明なキーはコードを16進数で表示
-            snprintf(::lastKeyCodeText, sizeof(::lastKeyCodeText), "0x%02X", keycode);
-            keyName = ::lastKeyCodeText;
+            snprintf(lastKeyCodeText, sizeof(lastKeyCodeText), "0x%02X", keycode);
+            keyName = lastKeyCodeText;
             break;
         }
         
@@ -103,10 +103,13 @@ public:
         displayController.showKeyPress(displayChar, keycode);
       }
       
-      // キーのリリース(キーを離す操作)も送信
+      // キーのリリース(キーを離す操作)も送信 - BLE接続時のみ
       forwardKeyToBle(keycode, modifier, false);
     }
   }
+  
+  // キーボード入力の詳細表示用
+  char lastKeyCodeText[10] = {0};
   
   // キーボードレポート全体を処理するメソッドをオーバーライド
   void onKeyboard(hid_keyboard_report_t report, hid_keyboard_report_t last_report) override {
@@ -138,9 +141,72 @@ public:
       }
       
       // 他の修飾キーも同様に処理
-      // ...existing code...
+      if (changed_modifier & KEYBOARD_MODIFIER_LEFTSHIFT) {
+        if (report.modifier & KEYBOARD_MODIFIER_LEFTSHIFT) {
+          if (bleEnabled && bleKeyboard.isConnected()) bleKeyboard.press(KEY_LEFT_SHIFT);
+        } else {
+          if (bleEnabled && bleKeyboard.isConnected()) bleKeyboard.release(KEY_LEFT_SHIFT);
+        }
+      }
+      
+      if (changed_modifier & KEYBOARD_MODIFIER_LEFTALT) {
+        if (report.modifier & KEYBOARD_MODIFIER_LEFTALT) {
+          if (bleEnabled && bleKeyboard.isConnected()) bleKeyboard.press(KEY_LEFT_ALT);
+        } else {
+          if (bleEnabled && bleKeyboard.isConnected()) bleKeyboard.release(KEY_LEFT_ALT);
+        }
+      }
+      
+      if (changed_modifier & KEYBOARD_MODIFIER_LEFTGUI) {
+        if (report.modifier & KEYBOARD_MODIFIER_LEFTGUI) {
+          if (bleEnabled && bleKeyboard.isConnected()) bleKeyboard.press(KEY_LEFT_GUI);
+        } else {
+          if (bleEnabled && bleKeyboard.isConnected()) bleKeyboard.release(KEY_LEFT_GUI);
+        }
+      }
+      
+      if (changed_modifier & KEYBOARD_MODIFIER_RIGHTCTRL) {
+        if (report.modifier & KEYBOARD_MODIFIER_RIGHTCTRL) {
+          if (bleEnabled && bleKeyboard.isConnected()) bleKeyboard.press(KEY_RIGHT_CTRL);
+        } else {
+          if (bleEnabled && bleKeyboard.isConnected()) bleKeyboard.release(KEY_RIGHT_CTRL);
+        }
+      }
+      
+      if (changed_modifier & KEYBOARD_MODIFIER_RIGHTSHIFT) {
+        if (report.modifier & KEYBOARD_MODIFIER_RIGHTSHIFT) {
+          if (bleEnabled && bleKeyboard.isConnected()) bleKeyboard.press(KEY_RIGHT_SHIFT);
+        } else {
+          if (bleEnabled && bleKeyboard.isConnected()) bleKeyboard.release(KEY_RIGHT_SHIFT);
+        }
+      }
+      
+      if (changed_modifier & KEYBOARD_MODIFIER_RIGHTALT) {
+        if (report.modifier & KEYBOARD_MODIFIER_RIGHTALT) {
+          if (bleEnabled && bleKeyboard.isConnected()) bleKeyboard.press(KEY_RIGHT_ALT);
+        } else {
+          if (bleEnabled && bleKeyboard.isConnected()) bleKeyboard.release(KEY_RIGHT_ALT);
+        }
+      }
+      
+      if (changed_modifier & KEYBOARD_MODIFIER_RIGHTGUI) {
+        if (report.modifier & KEYBOARD_MODIFIER_RIGHTGUI) {
+          if (bleEnabled && bleKeyboard.isConnected()) bleKeyboard.press(KEY_RIGHT_GUI);
+        } else {
+          if (bleEnabled && bleKeyboard.isConnected()) bleKeyboard.release(KEY_RIGHT_GUI);
+        }
+      }
       
       last_modifier = report.modifier;
+    }
+    
+    // 新しく押されたキーを処理 (前回のレポートにないキー)
+    bool shift = (report.modifier & KEYBOARD_MODIFIER_LEFTSHIFT) || (report.modifier & KEYBOARD_MODIFIER_RIGHTSHIFT);
+    for (int i = 0; i < 6; i++) {
+      if (report.keycode[i] != 0 && !hasKeycode(last_report, report.keycode[i])) {
+        uint8_t ascii = getKeycodeToAscii(report.keycode[i], shift);
+        onKeyboardKey(ascii, report.keycode[i], report.modifier);
+      }
     }
   }
   
@@ -163,19 +229,177 @@ public:
     if ((idVendor == 0xD010 && idProduct == 0x1601) || 
         (manufacturer == "DOIO" && productName == "DOIO")) {
       Serial.println("DOIO KB16キーボードを検出しました！");
-      // ...existing code...
+      Serial.println("このデバイス専用の処理を適用します...");
+      
+      // インターフェース2を使用（Pythonツールの解析結果から修正）
+      Serial.println("Interface 2を使用します (updated)");
+      
+      // デバッグ出力を強化
+      ESP_LOGI("EspUsbHost", "DOIO KB16 キーボード対応モードを有効化");
+      ESP_LOGI("EspUsbHost", "Usage Page: 0xFF60, Usage: 0x0061");
+      
+      // KB16キーボード用フラグを設定
+      isDoioKb16 = true;
+      // データサイズ: 32バイトまたは6バイト
+      doioDataSize = 32;
     }
-    // その他のデバイス固有処理
-    // ...existing code...
     
-    delay(3000); // 3秒間デバイス情報を表示
+    // デバイス情報の表示時間を短く調整（3秒→1秒）
+    delay(1000); 
+    
+    // 通常画面に戻る
     displayController.updateDisplay();
   }
   
   // 生のUSBデータを表示するためのオーバーライド
   void onReceive(const usb_transfer_t *transfer) override {
-    // ...existing code...
+    endpoint_data_t *endpoint_data = &endpoint_data_list[(transfer->bEndpointAddress & USB_B_ENDPOINT_ADDRESS_EP_NUM_MASK)];
+
+    // DOIO KB16キーボード用の特別処理（絶対に消さない）
+    if (isDoioKb16) {
+      if (transfer->actual_num_bytes > 0) {
+        #if DEBUG_OUTPUT
+        // データを16進数表示
+        String hex_data = "";
+        for (int i = 0; i < transfer->actual_num_bytes; i++) {
+          if (transfer->data_buffer[i] < 16) hex_data += "0";
+          hex_data += String(transfer->data_buffer[i], HEX) + " ";
+        }
+        hex_data.trim();
+        Serial.printf("DOIO KB16 Raw data: EP=0x%02X, bytes=%d, data=[%s]\n", 
+                    transfer->bEndpointAddress, transfer->actual_num_bytes, hex_data.c_str());
+        #endif
+        
+        // キーボードデータ構造を解析
+        hid_keyboard_report_t report = {};
+        
+        // 第1バイト: 修飾キー (保存するが、常に0x06の場合は無視)
+        uint8_t rawModifier = transfer->data_buffer[0];
+        
+        // KB16は常に0x06（左Shift+左Alt）を送信するようだが、実際はそうでないので無視する
+        // 代わりに特定の修飾キーを検出する
+        if (rawModifier == 0x06) {
+          report.modifier = 0; // 修飾キーをリセット
+        } else {
+          report.modifier = rawModifier; // 異なる値なら採用
+        }
+        
+        // すべてのバイトをスキャンして非ゼロの値（キーコード）を探す
+        // 無効なキーコードを除外 (0x01, 0x02, 0x03, 0xFF, 0x40, 0x80など)
+        for (int i = 1; i < transfer->actual_num_bytes; i++) {
+          uint8_t keycode = transfer->data_buffer[i];
+          // 有効なキーコードの範囲をチェック (主に0x04-0x38, 一部特殊キー)
+          if (keycode >= 0x04 && keycode <= 0x65 && // 標準的なキーコード範囲
+              keycode != 0x40 && keycode != 0x80) { // よく誤検出される値を除外
+            addKeyToReport(keycode, report);
+          }
+          
+          // 特殊キーの検出 (修飾キーかどうかを確認)
+          if (i >= 1 && i <= 4) { // インデックス1-4は制御バイトの可能性
+            switch (keycode) {
+              case 0x01: // Ctrlキーの可能性
+                report.modifier |= KEYBOARD_MODIFIER_LEFTCTRL;
+                break;
+              case 0x02: // Shiftキーの可能性
+                report.modifier |= KEYBOARD_MODIFIER_LEFTSHIFT;
+                break;
+              case 0x04: // Altキーの可能性 (検出済みの可能性)
+                report.modifier |= KEYBOARD_MODIFIER_LEFTALT;
+                break;
+              case 0x08: // GUIキーの可能性
+                report.modifier |= KEYBOARD_MODIFIER_LEFTGUI;
+                break;
+            }
+          }
+        }
+        
+        static hid_keyboard_report_t last_report = {};
+        
+        // キーボード状態が変化した場合だけ処理
+        if (memcmp(&last_report, &report, sizeof(report)) != 0) {
+          #if DEBUG_OUTPUT
+          Serial.printf("KB16キーボード状態変化: modifier=0x%02X, keys=[0x%02X,0x%02X,0x%02X,0x%02X,0x%02X,0x%02X]\n",
+                     report.modifier, report.keycode[0], report.keycode[1], report.keycode[2], 
+                     report.keycode[3], report.keycode[4], report.keycode[5]);
+          #endif
+          
+          // 標準のキーボード処理を呼び出す
+          onKeyboard(report, last_report);
+          
+          // 新しく押されたキーを処理 (前回のレポートにないキー)
+          bool shift = (report.modifier & KEYBOARD_MODIFIER_LEFTSHIFT) || (report.modifier & KEYBOARD_MODIFIER_RIGHTSHIFT);
+          for (int i = 0; i < 6; i++) {
+            if (report.keycode[i] != 0 && !hasKeycode(last_report, report.keycode[i])) {
+              uint8_t ascii = getKeycodeToAscii(report.keycode[i], shift);
+              #if DEBUG_OUTPUT
+              Serial.printf("キー押下: ASCII=0x%02X (%c), keycode=0x%02X, modifier=0x%02X\n", 
+                         ascii, (ascii >= 32 && ascii <= 126) ? (char)ascii : '?', 
+                         report.keycode[i], report.modifier);
+              #endif
+              onKeyboardKey(ascii, report.keycode[i], report.modifier);
+            }
+          }
+          
+          // 最後の状態を更新
+          memcpy(&last_report, &report, sizeof(last_report));
+        }
+      }
+    } 
+    // 通常のデバイス（DOIO KB16以外）に対する処理
+    else {
+      #if DEBUG_OUTPUT
+      // 生のデータバッファをデバッグ表示
+      if (transfer->actual_num_bytes > 0) {
+        String buffer_str = "";
+        for (int i = 0; i < transfer->actual_num_bytes && i < 16; i++) {
+          if (transfer->data_buffer[i] < 16) {
+            buffer_str += "0";
+          }
+          buffer_str += String(transfer->data_buffer[i], HEX) + " ";
+        }
+        buffer_str.trim();
+        Serial.printf("Raw data received: EP=0x%02X, bytes=%d, data=[ %s ]\n", 
+                    transfer->bEndpointAddress, transfer->actual_num_bytes, buffer_str.c_str());
+      }
+      #endif
+    }
   }
+  
+  // 指定されたキーコードがレポートに含まれているか確認
+  bool hasKeycode(const hid_keyboard_report_t &report, uint8_t keycode) {
+    for (int i = 0; i < 6; i++) {
+      if (report.keycode[i] == keycode) {
+        return true;
+      }
+    }
+    return false;
+  }
+  
+  // レポートの空きスロットにキーを追加
+  void addKeyToReport(uint8_t keycode, hid_keyboard_report_t &report) {
+    if (keycode == 0) return; // 0は追加しない
+    
+    // 既に含まれているキーは追加しない
+    for (int i = 0; i < 6; i++) {
+      if (report.keycode[i] == keycode) {
+        return;
+      }
+    }
+    
+    // 空きスロットを探して追加
+    for (int i = 0; i < 6; i++) {
+      if (report.keycode[i] == 0) {
+        report.keycode[i] = keycode;
+        return;
+      }
+    }
+  }
+  
+private:
+  // DOIO KB16キーボードフラグ
+  bool isDoioKb16 = false;
+  // DOIO KB16のデータサイズ（32バイトまたは6バイト）
+  uint8_t doioDataSize = 32;
 };
 
 MyEspUsbHost usbHost;
