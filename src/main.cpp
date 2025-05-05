@@ -12,7 +12,7 @@ bool bleEnabled = true;  // BLE機能のオンオフ制御用
 // 最後のキー入力の情報を保持
 char lastKeyCodeText[8]; // キーコードを文字列として保持するバッファ
 
-void forwardKeyToBle(uint8_t keycode, uint8_t modifier, bool keyDown);
+void sendKeyToBle(uint8_t keycode, uint8_t modifier);
 
 class MyEspUsbHost : public EspUsbHost {
 public:
@@ -30,8 +30,8 @@ public:
       // キー入力音を鳴らす - BLE接続に関係なく必ず音を鳴らす
       speakerController.playKeySound();
       
-      // BLEでキーを送信(キー押下) - BLE接続時のみ
-      forwardKeyToBle(keycode, modifier, true);
+      // BLEでキーを送信 - BLE接続時のみ（一度だけ送信）
+      sendKeyToBle(keycode, modifier);
       
       if (' ' <= ascii && ascii <= '~') {
         // 印字可能文字
@@ -102,9 +102,6 @@ public:
         // キー入力を表示
         displayController.showKeyPress(displayChar, keycode);
       }
-      
-      // キーのリリース(キーを離す操作)も送信 - BLE接続時のみ
-      forwardKeyToBle(keycode, modifier, false);
     }
   }
   
@@ -405,22 +402,21 @@ private:
 MyEspUsbHost usbHost;
 
 // BLEにキーを転送する関数
-void forwardKeyToBle(uint8_t keycode, uint8_t modifier, bool keyDown) {
+void sendKeyToBle(uint8_t keycode, uint8_t modifier) {
   if (!bleEnabled) {
     return;
   }
 
-  // BLEが未接続の場合は接続試行
+  // BLEが未接続の場合は何もしない
   if (!bleKeyboard.isConnected()) {
     #if DEBUG_OUTPUT
-    Serial.println("BLE not connected, ensuring advertising is active...");
+    Serial.println("BLE not connected, skipping key send");
     #endif
     return;
   }
 
   #if DEBUG_OUTPUT
-  Serial.printf("BLE forward key: keycode=0x%02X, modifier=0x%02X, %s\n", 
-              keycode, modifier, keyDown ? "press" : "release");
+  Serial.printf("BLE send key: keycode=0x%02X, modifier=0x%02X\n", keycode, modifier);
   #endif
 
   uint8_t bleKeycode = 0;
@@ -467,7 +463,27 @@ void forwardKeyToBle(uint8_t keycode, uint8_t modifier, bool keyDown) {
     // ファンクションキー
     case 0x3A: bleKeycode = KEY_F1; break;
     case 0x3B: bleKeycode = KEY_F2; break;
-    // ...existing code...
+    case 0x3C: bleKeycode = KEY_F3; break;
+    case 0x3D: bleKeycode = KEY_F4; break;
+    case 0x3E: bleKeycode = KEY_F5; break;
+    case 0x3F: bleKeycode = KEY_F6; break;
+    case 0x40: bleKeycode = KEY_F7; break;
+    case 0x41: bleKeycode = KEY_F8; break;
+    case 0x42: bleKeycode = KEY_F9; break;
+    case 0x43: bleKeycode = KEY_F10; break;
+    case 0x44: bleKeycode = KEY_F11; break;
+    case 0x45: bleKeycode = KEY_F12; break;
+    
+    // その他の特殊キー
+    case 0x46: bleKeycode = KEY_PRTSC; break;
+    case 0x47: bleKeycode = KEY_CAPS_LOCK; break; // SCROLL_LOCKをCAPS_LOCKに置き換え
+    case 0x48: bleKeycode = KEY_INSERT; break;    // PAUSEをINSERTに置き換え
+    case 0x49: bleKeycode = KEY_INSERT; break;
+    case 0x4A: bleKeycode = KEY_HOME; break;
+    case 0x4B: bleKeycode = KEY_PAGE_UP; break;
+    case 0x4C: bleKeycode = KEY_DELETE; break;
+    case 0x4D: bleKeycode = KEY_END; break;
+    case 0x4E: bleKeycode = KEY_PAGE_DOWN; break;
     
     default:
       #if DEBUG_OUTPUT
@@ -476,19 +492,13 @@ void forwardKeyToBle(uint8_t keycode, uint8_t modifier, bool keyDown) {
       return;
   }
   
-  // キーを送信
-  if (keyDown) {
-    #if DEBUG_OUTPUT
-    Serial.printf("BLE press: 0x%02X (char: %c)\n", bleKeycode, 
+  // キーを単一のイベントとして送信（1回の書き込み操作）
+  // write()メソッドはキーを押してすぐにリリースする
+  #if DEBUG_OUTPUT
+  Serial.printf("BLE write: 0x%02X (char: %c)\n", bleKeycode, 
               (bleKeycode >= 32 && bleKeycode <= 126) ? (char)bleKeycode : '?');
-    #endif
-    bleKeyboard.press(bleKeycode);
-  } else {
-    #if DEBUG_OUTPUT
-    Serial.printf("BLE release: 0x%02X\n", bleKeycode);
-    #endif
-    bleKeyboard.release(bleKeycode);
-  }
+  #endif
+  bleKeyboard.write(bleKeycode);
 }
 
 void setup() {
