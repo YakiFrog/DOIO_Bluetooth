@@ -420,45 +420,100 @@ void sendKeyToBle(uint8_t keycode, uint8_t modifier) {
   #endif
 
   uint8_t bleKeycode = 0;
+  bool handleAsRawKeycode = false;
   
   // HIDキーコードからBLEキーコードへの変換
   switch (keycode) {
     // 英数字キー (HID Usage Table基準)
     case 0x04 ... 0x1D: // A-Z (0x04-0x1D)
-      bleKeycode = keycode - 0x04 + 'a'; // 例: 0x04 -> 'a' (97)
+      // 大文字か小文字かを判断（SHIFTキーの状態を確認）
+      if (modifier & (KEYBOARD_MODIFIER_LEFTSHIFT | KEYBOARD_MODIFIER_RIGHTSHIFT)) {
+        // 大文字（SHIFTが押されている）
+        bleKeycode = keycode - 0x04 + 'A'; // 例: 0x04 -> 'A' (65)
+      } else {
+        // 小文字（SHIFTが押されていない）
+        bleKeycode = keycode - 0x04 + 'a'; // 例: 0x04 -> 'a' (97)
+      }
       break;
       
     case 0x1E ... 0x27: // 1-0 (0x1E-0x27)
-      if (keycode == 0x27) { // 0キー
-        bleKeycode = '0';
+      if (modifier & (KEYBOARD_MODIFIER_LEFTSHIFT | KEYBOARD_MODIFIER_RIGHTSHIFT)) {
+        // SHIFTが押されている場合は記号を送信
+        switch (keycode) {
+          case 0x1E: bleKeycode = '!'; break; // 1/!
+          case 0x1F: bleKeycode = '@'; break; // 2/@
+          case 0x20: bleKeycode = '#'; break; // 3/#
+          case 0x21: bleKeycode = '$'; break; // 4/$
+          case 0x22: bleKeycode = '%'; break; // 5/%
+          case 0x23: bleKeycode = '^'; break; // 6/^
+          case 0x24: bleKeycode = '&'; break; // 7/&
+          case 0x25: bleKeycode = '*'; break; // 8/*
+          case 0x26: bleKeycode = '('; break; // 9/(
+          case 0x27: bleKeycode = ')'; break; // 0/)
+        }
       } else {
-        bleKeycode = keycode - 0x1E + '1'; // 例: 0x1E -> '1' (49)
+        // 数字を送信
+        if (keycode == 0x27) { // 0キー
+          bleKeycode = '0';
+        } else {
+          bleKeycode = keycode - 0x1E + '1'; // 例: 0x1E -> '1' (49)
+        }
       }
       break;
     
     // 特殊キー
-    case 0x28: bleKeycode = KEY_RETURN; break;
-    case 0x29: bleKeycode = KEY_ESC; break;
-    case 0x2A: bleKeycode = KEY_BACKSPACE; break;
-    case 0x2B: bleKeycode = KEY_TAB; break;
-    case 0x2C: bleKeycode = ' '; break;
+    case 0x28: bleKeycode = KEY_RETURN; break; // Enter
+    case 0x29: bleKeycode = KEY_ESC; break; // ESC
+    case 0x2A: bleKeycode = KEY_BACKSPACE; break; // Backspace
+    case 0x2B: bleKeycode = KEY_TAB; break; // Tab
+    case 0x2C: bleKeycode = ' '; break; // Space
+    
+    // 矢印キー
     case 0x4F: bleKeycode = KEY_RIGHT_ARROW; break;
     case 0x50: bleKeycode = KEY_LEFT_ARROW; break;
     case 0x51: bleKeycode = KEY_DOWN_ARROW; break;
     case 0x52: bleKeycode = KEY_UP_ARROW; break;
     
     // 記号キー
-    case 0x2D: bleKeycode = '-'; break;
-    case 0x2E: bleKeycode = '='; break;
-    case 0x2F: bleKeycode = '['; break;
-    case 0x30: bleKeycode = ']'; break;
-    case 0x31: bleKeycode = '\\'; break;
-    case 0x33: bleKeycode = ';'; break;
-    case 0x34: bleKeycode = '\''; break;
-    case 0x35: bleKeycode = '`'; break;
-    case 0x36: bleKeycode = ','; break;
-    case 0x37: bleKeycode = '.'; break;
-    case 0x38: bleKeycode = '/'; break;
+    case 0x2D: // -/_
+      bleKeycode = (modifier & (KEYBOARD_MODIFIER_LEFTSHIFT | KEYBOARD_MODIFIER_RIGHTSHIFT)) ? '_' : '-';
+      break;
+    case 0x2E: // =/+
+      bleKeycode = (modifier & (KEYBOARD_MODIFIER_LEFTSHIFT | KEYBOARD_MODIFIER_RIGHTSHIFT)) ? '+' : '=';
+      break;
+    case 0x2F: // [/{
+      bleKeycode = (modifier & (KEYBOARD_MODIFIER_LEFTSHIFT | KEYBOARD_MODIFIER_RIGHTSHIFT)) ? '{' : '[';
+      break;
+    case 0x30: // ]/}
+      bleKeycode = (modifier & (KEYBOARD_MODIFIER_LEFTSHIFT | KEYBOARD_MODIFIER_RIGHTSHIFT)) ? '}' : ']';
+      break;
+    case 0x31: // \|
+      bleKeycode = (modifier & (KEYBOARD_MODIFIER_LEFTSHIFT | KEYBOARD_MODIFIER_RIGHTSHIFT)) ? '|' : '\\';
+      break;
+    case 0x32: // 日本語キーボード特有キー (#/~)
+      bleKeycode = (modifier & (KEYBOARD_MODIFIER_LEFTSHIFT | KEYBOARD_MODIFIER_RIGHTSHIFT)) ? '~' : '#';
+      break;
+    case 0x33: // ;/:
+      bleKeycode = (modifier & (KEYBOARD_MODIFIER_LEFTSHIFT | KEYBOARD_MODIFIER_RIGHTSHIFT)) ? ':' : ';';
+      break;
+    case 0x34: // '/''
+      bleKeycode = (modifier & (KEYBOARD_MODIFIER_LEFTSHIFT | KEYBOARD_MODIFIER_RIGHTSHIFT)) ? '"' : '\'';
+      break;
+    case 0x35: // `/~
+      bleKeycode = (modifier & (KEYBOARD_MODIFIER_LEFTSHIFT | KEYBOARD_MODIFIER_RIGHTSHIFT)) ? '~' : '`';
+      break;
+    case 0x36: // ,/<
+      bleKeycode = (modifier & (KEYBOARD_MODIFIER_LEFTSHIFT | KEYBOARD_MODIFIER_RIGHTSHIFT)) ? '<' : ',';
+      break;
+    case 0x37: // ./>
+      bleKeycode = (modifier & (KEYBOARD_MODIFIER_LEFTSHIFT | KEYBOARD_MODIFIER_RIGHTSHIFT)) ? '>' : '.';
+      break;
+    case 0x38: // //?
+      bleKeycode = (modifier & (KEYBOARD_MODIFIER_LEFTSHIFT | KEYBOARD_MODIFIER_RIGHTSHIFT)) ? '?' : '/';
+      break;
+    case 0x39: // Caps Lock
+      bleKeycode = KEY_CAPS_LOCK;
+      break;
       
     // ファンクションキー
     case 0x3A: bleKeycode = KEY_F1; break;
@@ -475,15 +530,64 @@ void sendKeyToBle(uint8_t keycode, uint8_t modifier) {
     case 0x45: bleKeycode = KEY_F12; break;
     
     // その他の特殊キー
-    case 0x46: bleKeycode = KEY_PRTSC; break;
-    case 0x47: bleKeycode = KEY_CAPS_LOCK; break; // SCROLL_LOCKをCAPS_LOCKに置き換え
-    case 0x48: bleKeycode = KEY_INSERT; break;    // PAUSEをINSERTに置き換え
-    case 0x49: bleKeycode = KEY_INSERT; break;
-    case 0x4A: bleKeycode = KEY_HOME; break;
-    case 0x4B: bleKeycode = KEY_PAGE_UP; break;
-    case 0x4C: bleKeycode = KEY_DELETE; break;
-    case 0x4D: bleKeycode = KEY_END; break;
-    case 0x4E: bleKeycode = KEY_PAGE_DOWN; break;
+    case 0x46: bleKeycode = KEY_PRTSC; break; // Print Screen
+    case 0x47: bleKeycode = KEY_CAPS_LOCK; break; // Scroll Lock - KEY_SCROLL_LOCKは未定義のため代替
+    case 0x48: bleKeycode = KEY_PRTSC; break; // Pause - KEY_PAUSEは未定義のため代替
+    case 0x49: bleKeycode = KEY_INSERT; break; // Insert
+    case 0x4A: bleKeycode = KEY_HOME; break; // Home
+    case 0x4B: bleKeycode = KEY_PAGE_UP; break; // Page Up
+    case 0x4C: bleKeycode = KEY_DELETE; break; // Delete
+    case 0x4D: bleKeycode = KEY_END; break; // End
+    case 0x4E: bleKeycode = KEY_PAGE_DOWN; break; // Page Down
+    
+    // テンキー
+    case 0x53: bleKeycode = KEY_CAPS_LOCK; break; // Num Lock - KEY_NUM_LOCKは未定義のため代替
+    case 0x54: bleKeycode = KEY_NUM_SLASH; break; // テンキー /
+    case 0x55: bleKeycode = KEY_NUM_ASTERISK; break; // テンキー *
+    case 0x56: bleKeycode = KEY_NUM_MINUS; break; // テンキー -
+    case 0x57: bleKeycode = KEY_NUM_PLUS; break; // テンキー +
+    case 0x58: bleKeycode = KEY_NUM_ENTER; break; // テンキー Enter
+    case 0x59: bleKeycode = KEY_NUM_1; break; // テンキー 1
+    case 0x5A: bleKeycode = KEY_NUM_2; break; // テンキー 2
+    case 0x5B: bleKeycode = KEY_NUM_3; break; // テンキー 3
+    case 0x5C: bleKeycode = KEY_NUM_4; break; // テンキー 4
+    case 0x5D: bleKeycode = KEY_NUM_5; break; // テンキー 5
+    case 0x5E: bleKeycode = KEY_NUM_6; break; // テンキー 6
+    case 0x5F: bleKeycode = KEY_NUM_7; break; // テンキー 7
+    case 0x60: bleKeycode = KEY_NUM_8; break; // テンキー 8
+    case 0x61: bleKeycode = KEY_NUM_9; break; // テンキー 9
+    case 0x62: bleKeycode = KEY_NUM_0; break; // テンキー 0
+    case 0x63: bleKeycode = KEY_NUM_PERIOD; break; // テンキー .
+    
+    // 言語固有キー
+    case 0x87: bleKeycode = 0x87; handleAsRawKeycode = true; break; // International 1 (日本語キーボードの場合「\」「_」)
+    case 0x88: bleKeycode = 0x88; handleAsRawKeycode = true; break; // International 2 (かな/カナ)
+    case 0x89: bleKeycode = 0x89; handleAsRawKeycode = true; break; // International 3 (¥ | 円記号)
+    case 0x8A: bleKeycode = 0x8A; handleAsRawKeycode = true; break; // International 4 (変換)
+    case 0x8B: bleKeycode = 0x8B; handleAsRawKeycode = true; break; // International 5 (無変換)
+    
+    // メディアコントロールキー
+    case 0xE2: 
+      bleKeyboard.write(KEY_MEDIA_MUTE);
+      return;
+    case 0xE9: 
+      bleKeyboard.write(KEY_MEDIA_VOLUME_UP);
+      return;
+    case 0xEA: 
+      bleKeyboard.write(KEY_MEDIA_VOLUME_DOWN);
+      return;
+    case 0xB5: 
+      bleKeyboard.write(KEY_MEDIA_NEXT_TRACK);
+      return;
+    case 0xB6: 
+      bleKeyboard.write(KEY_MEDIA_PREVIOUS_TRACK);
+      return;
+    case 0xB7: 
+      bleKeyboard.write(KEY_MEDIA_STOP);
+      return;
+    case 0xCD: 
+      bleKeyboard.write(KEY_MEDIA_PLAY_PAUSE);
+      return;
     
     default:
       #if DEBUG_OUTPUT
@@ -493,12 +597,36 @@ void sendKeyToBle(uint8_t keycode, uint8_t modifier) {
   }
   
   // キーを単一のイベントとして送信（1回の書き込み操作）
-  // write()メソッドはキーを押してすぐにリリースする
   #if DEBUG_OUTPUT
   Serial.printf("BLE write: 0x%02X (char: %c)\n", bleKeycode, 
               (bleKeycode >= 32 && bleKeycode <= 126) ? (char)bleKeycode : '?');
   #endif
-  bleKeyboard.write(bleKeycode);
+  
+  if (handleAsRawKeycode) {
+    // 生のキーコードとして送信（特殊な言語キーなど）
+    if (modifier) {
+      // 修飾キーと組み合わせる場合
+      if (modifier & KEYBOARD_MODIFIER_LEFTCTRL) bleKeyboard.press(KEY_LEFT_CTRL);
+      if (modifier & KEYBOARD_MODIFIER_LEFTSHIFT) bleKeyboard.press(KEY_LEFT_SHIFT);
+      if (modifier & KEYBOARD_MODIFIER_LEFTALT) bleKeyboard.press(KEY_LEFT_ALT);
+      if (modifier & KEYBOARD_MODIFIER_LEFTGUI) bleKeyboard.press(KEY_LEFT_GUI);
+      if (modifier & KEYBOARD_MODIFIER_RIGHTCTRL) bleKeyboard.press(KEY_RIGHT_CTRL);
+      if (modifier & KEYBOARD_MODIFIER_RIGHTSHIFT) bleKeyboard.press(KEY_RIGHT_SHIFT);
+      if (modifier & KEYBOARD_MODIFIER_RIGHTALT) bleKeyboard.press(KEY_RIGHT_ALT);
+      if (modifier & KEYBOARD_MODIFIER_RIGHTGUI) bleKeyboard.press(KEY_RIGHT_GUI);
+      
+      bleKeyboard.press(bleKeycode);
+      delay(10);
+      bleKeyboard.releaseAll();
+    } else {
+      bleKeyboard.press(bleKeycode);
+      delay(10);
+      bleKeyboard.release(bleKeycode);
+    }
+  } else {
+    // 通常のキー入力として送信
+    bleKeyboard.write(bleKeycode);
+  }
 }
 
 void setup() {
