@@ -227,6 +227,59 @@ void DisplayController::showKeyPress(char keyChar, uint8_t keycode) {
     display.display();
 }
 
+// 生のキーコードを確実に表示するための単純化されたメソッド
+void DisplayController::showRawKeyCode(uint8_t keycode, const char* description) {
+    display.clearDisplay();
+    
+    // ステータス行を表示（最上部）
+    display.setCursor(0, 0);
+    display.setTextSize(1);
+    display.print("USB: ");
+    if (usbConnected) {
+        display.print("Con ");
+    } else {
+        display.print("-- ");
+    }
+    
+    // BLEステータスを表示
+    display.print("BLE: ");
+    if (bleConnected) {
+        display.print("Con");
+    } else {
+        display.print("Wait");
+    }
+    
+    // キーコードを大きく表示（中央上部）
+    display.setTextSize(2);
+    char hexStr[8];
+    sprintf(hexStr, "0x%02X", keycode);
+    int16_t x1, y1;
+    uint16_t w, h;
+    display.getTextBounds(hexStr, 0, 0, &x1, &y1, &w, &h);
+    display.setCursor((SCREEN_WIDTH - w) / 2, 16);
+    display.print(hexStr);
+    
+    // 説明をその下に表示
+    display.setTextSize(1);
+    if (description && strlen(description) > 0) {
+        int16_t descWidth = strlen(description) * 6; // 1文字あたり約6ピクセル
+        display.setCursor((SCREEN_WIDTH - descWidth) / 2, 38);
+        display.print(description);
+    }
+    
+    // 入力履歴を表示（下部）
+    display.setCursor(0, 56);
+    // 最後の16文字だけ表示
+    if (displayText.length() > 16) {
+        display.print(displayText.substring(displayText.length() - 16));
+    } else {
+        display.print(displayText);
+    }
+    
+    // 表示を更新
+    display.display();
+}
+
 void DisplayController::showDeviceInfo(const String& manufacturer, const String& productName, 
                                      uint16_t idVendor, uint16_t idProduct) {
     deviceName = productName;

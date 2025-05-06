@@ -36,6 +36,9 @@ public:
     void showDeviceInfo(const String& manufacturer, const String& productName, 
                         uint16_t idVendor, uint16_t idProduct);
     
+    // 生のキーコードを表示するための新しいメソッド
+    void showRawKeyCode(uint8_t keycode, const char* description);
+    
     void setUsbConnected(bool connected);
     void setBleConnected(bool connected);
     

@@ -20,34 +20,41 @@ public:
     // キーコードとASCIIの両方をデバッグ出力 - 常に出力するよう変更
     Serial.printf("Key pressed: ASCII=0x%02X, Keycode=0x%02X, Modifier=0x%02X\n", ascii, keycode, modifier);
 
-    // 何かしらのキー入力があった
-    if (keycode != 0) {
-      // 内蔵LEDを点灯
-      ledController.keyPressed();
-      
-      // キー入力音を鳴らす - BLE接続に関係なく必ず音を鳴らす
-      speakerController.playKeySound();
-      
-      // BLEでキーを送信 - BLE接続時のみ（一度だけ送信）
-      sendKeyToBle(keycode, modifier);
-      
-      // 常にディスプレイに表示する（特殊キーも含め、すべてのキーコード）
-      displayController.showKeyPress((ascii >= 32 && ascii <= 126) ? (char)ascii : '?', keycode);
-      
-      // 印字可能文字の場合はテキストバッファに追加
-      if (' ' <= ascii && ascii <= '~') {
-        // 印字可能文字
-        Serial.printf("Printable char: %c\n", ascii);
-        displayController.addDisplayText((char)ascii);
-      } else if (ascii == '\r') {
-        // 改行
-        Serial.println("Enter key");
-        displayController.addDisplayText('\n');
-      }
-      
-      // キーコードを16進数で表示（常に表示）
-      Serial.printf("KeyCode: 0x%02X\n", keycode);
+    // キー入力があった - コードをより単純化して確実に表示するように修正
+    
+    // 内蔵LEDを点灯
+    ledController.keyPressed();
+    
+    // キー入力音を鳴らす - BLE接続に関係なく必ず音を鳴らす
+    speakerController.playKeySound();
+    
+    // BLEでキーを送信 - BLE接続時のみ（一度だけ送信）
+    sendKeyToBle(keycode, modifier);
+    
+    // 常にキーコードを16進数とキャラクタ表示
+    char keyDescStr[32];
+    if (' ' <= ascii && ascii <= '~') {
+      sprintf(keyDescStr, "Key: %c (0x%02X)", ascii, keycode);
+    } else {
+      sprintf(keyDescStr, "Key: 0x%02X", keycode);
     }
+    
+    // 画面に表示 - 常に何かを表示する（キーコードだけでも必ず表示）
+    displayController.showRawKeyCode(keycode, keyDescStr);
+    
+    // 印字可能文字の場合はテキストバッファに追加
+    if (' ' <= ascii && ascii <= '~') {
+      // 印字可能文字
+      Serial.printf("Printable char: %c\n", ascii);
+      displayController.addDisplayText((char)ascii);
+    } else if (ascii == '\r') {
+      // 改行
+      Serial.println("Enter key");
+      displayController.addDisplayText('\n');
+    }
+    
+    // キーコードを16進数で表示（常に表示）
+    Serial.printf("KeyCode: 0x%02X\n", keycode);
   }
   
   // キーボード入力の詳細表示用
@@ -142,11 +149,19 @@ public:
       last_modifier = report.modifier;
     }
     
-    // 新しく押されたキーを処理 (前回のレポートにないキー)
+    // 新しく押されたキーのみを処理 (前回のレポートにないキー)
     bool shift = (report.modifier & KEYBOARD_MODIFIER_LEFTSHIFT) || (report.modifier & KEYBOARD_MODIFIER_RIGHTSHIFT);
+    
+    // 新しいキーのみを処理（離したときのイベントは無視）
     for (int i = 0; i < 6; i++) {
       if (report.keycode[i] != 0 && !hasKeycode(last_report, report.keycode[i])) {
         uint8_t ascii = getKeycodeToAscii(report.keycode[i], shift);
+        
+        // 0x06などの特殊キーも含め、全てのキーを表示
+        Serial.printf("新規キー検出: ASCII=0x%02X, keycode=0x%02X, modifier=0x%02X\n", 
+                      ascii, report.keycode[i], report.modifier);
+                      
+        // キー入力処理を呼び出し
         onKeyboardKey(ascii, report.keycode[i], report.modifier);
       }
     }
