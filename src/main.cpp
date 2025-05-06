@@ -652,7 +652,4 @@ void loop() {
   // LED更新処理
   ledController.updateKeyLED();   // キー入力LED
   ledController.updateStatusLED(); // ステータスLED
-  
-  // キーフラグのリセット処理
-  usbHost.resetKeyFlags();
 }
