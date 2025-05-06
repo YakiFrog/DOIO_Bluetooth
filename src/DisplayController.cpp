@@ -4,80 +4,6 @@
 // グローバルインスタンス
 DisplayController displayController;
 
-// 特殊キーの表示名を取得する関数
-const char* DisplayController::getSpecialKeyName(uint8_t keycode) {
-    static char unknownKey[8];
-    
-    switch (keycode) {
-        case 0x28: return "Enter";
-        case 0x29: return "Esc";
-        case 0x2A: return "BS";
-        case 0x2B: return "Tab";
-        case 0x2C: return "Space";
-        case 0x4F: return "Right";
-        case 0x50: return "Left";
-        case 0x51: return "Down";
-        case 0x52: return "Up";
-        case 0x39: return "Caps";
-        case 0x3A: return "F1";
-        case 0x3B: return "F2";
-        case 0x3C: return "F3";
-        case 0x3D: return "F4";
-        case 0x3E: return "F5";
-        case 0x3F: return "F6";
-        case 0x40: return "F7";
-        case 0x41: return "F8";
-        case 0x42: return "F9";
-        case 0x43: return "F10";
-        case 0x44: return "F11";
-        case 0x45: return "F12";
-        case 0x46: return "PrtSc";
-        case 0x47: return "ScrLk";
-        case 0x48: return "Pause";
-        case 0x49: return "Ins";
-        case 0x4A: return "Home";
-        case 0x4B: return "PgUp";
-        case 0x4C: return "Del";
-        case 0x4D: return "End";
-        case 0x4E: return "PgDn";
-        case 0x53: return "NumLk";
-        // テンキー
-        case 0x54: return "Num/";
-        case 0x55: return "Num*";
-        case 0x56: return "Num-";
-        case 0x57: return "Num+";
-        case 0x58: return "NumEnt";
-        case 0x59: return "Num1";
-        case 0x5A: return "Num2";
-        case 0x5B: return "Num3";
-        case 0x5C: return "Num4";
-        case 0x5D: return "Num5";
-        case 0x5E: return "Num6";
-        case 0x5F: return "Num7";
-        case 0x60: return "Num8";
-        case 0x61: return "Num9";
-        case 0x62: return "Num0";
-        case 0x63: return "Num.";
-        // 日本語キー
-        case 0x87: return "\\/_";
-        case 0x88: return "カナ";
-        case 0x89: return "¥";
-        case 0x8A: return "変換";
-        case 0x8B: return "無変換";
-        // メディアキー
-        case 0xE2: return "Mute";
-        case 0xE9: return "Vol+";
-        case 0xEA: return "Vol-";
-        case 0xB5: return "Next";
-        case 0xB6: return "Prev";
-        case 0xB7: return "Stop";
-        case 0xCD: return "Play";
-        default:
-            snprintf(unknownKey, sizeof(unknownKey), "0x%02X", keycode);
-            return unknownKey;
-    }
-}
-
 void DisplayController::begin() {
     // I2C初期化はmain.cppで行うため、ここでは行わない
     
@@ -170,51 +96,29 @@ void DisplayController::showKeyPress(char keyChar, uint8_t keycode) {
     // BLEステータスを表示
     display.print("BLE: ");
     if (bleConnected) {
-        display.print("Con");
+        display.println("Con");
     } else {
-        display.print("Wait");
+        display.println("Wait");
     }
     
-    // バイナリキーコードを大きく中央に表示
-    display.setTextSize(2);
-    char hexCodeStr[8];
-    sprintf(hexCodeStr, "0x%02X", keycode);
+    // キー入力を大きく表示（中央部）
+    display.setTextSize(3);
     
-    // 中央に配置
-    int16_t textWidth = strlen(hexCodeStr) * 12; // 大まかな幅を計算
-    display.setCursor((SCREEN_WIDTH - textWidth) / 2, 20);
-    display.print(hexCodeStr);
+    if (keyChar == CHAR_ENTER) {
+        // Enterキーの場合は特別な表示
+        display.setCursor(20, 25);
+        display.print("Enter");
+    } else {
+        display.setCursor(56, 25);
+        display.print(keyChar);
+    }
     
-    // 特殊キー名やASCII文字を表示（その下に小さく）
+    // キーコードを16進数表示（調査用）
     display.setTextSize(1);
+    display.setCursor(100, 0);
+    display.printf("0x%02X", keycode);
     
-    // キーコードから特殊キーの表示名を取得
-    const char* specialKeyName = getSpecialKeyName(keycode);
-    
-    // 特殊キー名があれば表示
-    if (specialKeyName[0] != '0') { // 特殊キー名がある場合
-        int16_t nameWidth = strlen(specialKeyName) * 6;
-        display.setCursor((SCREEN_WIDTH - nameWidth) / 2, 40);
-        display.print(specialKeyName);
-    }
-    // 印字可能文字の場合は特殊キーの下に表示
-    else if (' ' <= keyChar && keyChar <= '~') {
-        char charStr[3] = {keyChar, 0};
-        int16_t nameWidth = strlen(charStr) * 6;
-        display.setCursor((SCREEN_WIDTH - nameWidth) / 2, 40);
-        display.print(charStr);
-    }
-    // 未知のキーの場合は何も表示しない（既にバイナリコードが中央に表示されている）
-    else {
-        // 未知のキーも表示
-        char unknownStr[16];
-        sprintf(unknownStr, "unknown key");
-        int16_t nameWidth = strlen(unknownStr) * 6;
-        display.setCursor((SCREEN_WIDTH - nameWidth) / 2, 40);
-        display.print(unknownStr);
-    }
-    
-    // 入力履歴を表示（下部）
+    // 入力履歴を小さく表示（下部）
     display.setCursor(0, 56);
     // 最後の16文字だけ表示
     if (displayText.length() > 16) {
@@ -223,11 +127,10 @@ void DisplayController::showKeyPress(char keyChar, uint8_t keycode) {
         display.print(displayText);
     }
     
-    // 最後に表示を更新
     display.display();
 }
 
-// 生のキーコードを確実に表示するための単純化されたメソッド
+// 生のキーコードを表示する専用メソッド（未知のキーや特殊キー用）
 void DisplayController::showRawKeyCode(uint8_t keycode, const char* description) {
     display.clearDisplay();
     
@@ -244,30 +147,22 @@ void DisplayController::showRawKeyCode(uint8_t keycode, const char* description)
     // BLEステータスを表示
     display.print("BLE: ");
     if (bleConnected) {
-        display.print("Con");
+        display.println("Con");
     } else {
-        display.print("Wait");
+        display.println("Wait");
     }
     
-    // キーコードを大きく表示（中央上部）
+    // キーコードを中央に大きく表示
     display.setTextSize(2);
-    char hexStr[8];
-    sprintf(hexStr, "0x%02X", keycode);
-    int16_t x1, y1;
-    uint16_t w, h;
-    display.getTextBounds(hexStr, 0, 0, &x1, &y1, &w, &h);
-    display.setCursor((SCREEN_WIDTH - w) / 2, 16);
-    display.print(hexStr);
+    display.setCursor(10, 16);
+    display.printf("0x%02X", keycode);
     
-    // 説明をその下に表示
+    // 説明テキストを表示
     display.setTextSize(1);
-    if (description && strlen(description) > 0) {
-        int16_t descWidth = strlen(description) * 6; // 1文字あたり約6ピクセル
-        display.setCursor((SCREEN_WIDTH - descWidth) / 2, 38);
-        display.print(description);
-    }
+    display.setCursor(0, 35);
+    display.println(description);
     
-    // 入力履歴を表示（下部）
+    // 入力履歴を小さく表示（下部）
     display.setCursor(0, 56);
     // 最後の16文字だけ表示
     if (displayText.length() > 16) {
@@ -276,7 +171,6 @@ void DisplayController::showRawKeyCode(uint8_t keycode, const char* description)
         display.print(displayText);
     }
     
-    // 表示を更新
     display.display();
 }
 
