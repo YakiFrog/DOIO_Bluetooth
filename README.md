@@ -50,6 +50,109 @@
   - Bluetooth接続時：接続音（上昇音）
   - Bluetooth切断時：切断音（下降音）
 
+## システム状態遷移図
+
+```mermaid
+stateDiagram-v2
+    [*] --> 初期化 : 電源投入
+    初期化 --> BLE待機 : BLEアドバタイジング開始
+    note right of 初期化: 起動メロディ再生
+    
+    state USB接続状態 {
+        [*] --> USB未接続
+        USB未接続 --> USBキーボード検出 : USBキーボード接続
+        USBキーボード検出 --> USBキーボード認識完了 : HIDデバイス初期化
+        note right of USBキーボード検出: キーボードタイプ判定
+        note right of USBキーボード検出: (標準HID/DOIO KB16)
+        USBキーボード認識完了 --> USB未接続 : USBキーボード切断
+    }
+
+    state Bluetooth状態 {
+        [*] --> BLE待機
+        BLE待機 --> BLE接続完了 : ホストデバイスと接続
+        note right of BLE待機: 外部LED点滅
+        BLE接続完了 --> BLE待機 : 接続切断
+        note right of BLE接続完了: 接続音再生
+        note right of BLE接続完了: 外部LED常時点灯
+    }
+    
+    state キー処理 {
+        [*] --> キー待機
+        キー待機 --> キー処理中 : キー入力検出
+        キー処理中 --> BLEキー送信
+        キー処理中 --> キー表示更新
+        キー処理中 --> キークリック音
+        キー処理中 --> 内蔵LED点灯
+        BLEキー送信 --> キー待機 : 送信完了
+        キー表示更新 --> キー待機
+        キークリック音 --> キー待機
+        内蔵LED点灯 --> キー待機 : 100ms後自動消灯
+    }
+    
+    BLE待機 --> BLE接続完了 : ホストデバイスと接続
+    BLE接続完了 --> BLE待機 : 接続切断
+    
+    note right of BLE接続完了: 外部LED常時点灯
+    note right of BLE待機: 外部LED点滅
+```
+
+## データフロー図
+
+```mermaid
+flowchart TD
+    USB[USBキーボード] -->|HIDレポート| ESP[ESP32-S3]
+    ESP -->|キーコード処理| BLE[BLEキーボード送信]
+    ESP -->|状態表示| OLED[OLEDディスプレイ]
+    ESP -->|視覚フィードバック| LED[ステータスLED]
+    ESP -->|聴覚フィードバック| SPK[圧電スピーカー]
+    BLE -->|HIDプロファイル| HOST[接続先デバイス]
+    
+    subgraph ESP32-S3内部処理
+        USB_IN[USB入力検出] --> RAW[生データ解析]
+        RAW --> KEY_DET[キーコード検出]
+        KEY_DET --> BLE_SEND[BLE送信処理]
+        KEY_DET --> KEY_FDB[キー入力フィードバック]
+        KEY_FDB --> LED_CTRL[LED制御]
+        KEY_FDB --> SOUND_CTRL[サウンド制御]
+        KEY_FDB --> DISP_CTRL[ディスプレイ制御]
+    end
+```
+
+## USBキーボード検出プロセス
+
+```mermaid
+sequenceDiagram
+    participant U as USBキーボード
+    participant E as ESP32-S3
+    participant B as Bluetoothホスト
+    
+    U->>E: USB接続
+    E->>E: USBデバイス検出
+    E->>E: ベンダー/製品ID確認
+    alt DOIOキーボード検出
+        E->>E: DOIO KB16専用処理を有効化
+    else 標準HIDキーボード
+        E->>E: 標準HID処理を使用
+    end
+    E->>E: デバイス情報をOLEDに表示
+    
+    U->>E: キーボードHIDレポート送信
+    E->>E: キーコード抽出
+    E->>E: キープレス音再生
+    E->>E: 内蔵LEDを点灯
+    E->>E: キーをディスプレイに表示
+    E->>B: BLEキーボードHIDレポート送信
+    B->>E: ステータス更新 (接続/切断)
+    
+    alt Bluetooth切断
+        E->>E: 外部LEDを点滅モードに変更
+        E->>E: 切断音を再生
+    else Bluetooth再接続
+        E->>E: 外部LEDを点灯モードに変更
+        E->>E: 接続音を再生
+    end
+```
+
 ## 注意事項
 
 ### ファームウェア書き込み
@@ -113,6 +216,45 @@ build_flags =
 - プログラムが書き込めない場合:
   - USB関連設定をコメントアウトしてください
   - ブートモード操作を正確に行ってください
+
+- キーが誤認識される場合:
+  - キーボードの種類に応じた特殊処理が必要な可能性があります
+  - キーコードのデバッグ出力を有効にして確認してください
+
+## システムアーキテクチャ
+
+```mermaid
+graph TB
+    subgraph ハードウェア
+        ESP32[ESP32-S3 マイコン]
+        USB[USBホスト]
+        BLE[Bluetooth LE]
+        OLED[OLEDディスプレイ]
+        LED_INT[内蔵LED]
+        LED_EXT[外部LED]
+        SPKR[圧電スピーカー]
+    end
+    
+    subgraph コアモジュール
+        MAIN[main.cpp]
+        ESPUSB[EspUsbHost]
+        DISP[DisplayController]
+        PERI[Peripherals]
+        BLE_KB[BleKeyboard]
+    end
+    
+    MAIN --> ESPUSB
+    MAIN --> DISP
+    MAIN --> PERI
+    MAIN --> BLE_KB
+    
+    ESPUSB --> USB
+    BLE_KB --> BLE
+    DISP --> OLED
+    PERI --> LED_INT
+    PERI --> LED_EXT
+    PERI --> SPKR
+```
 
 ## ライセンス
 MIT License
