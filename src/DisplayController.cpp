@@ -175,6 +175,10 @@ void DisplayController::showKeyPress(char keyChar, uint8_t keycode) {
         display.println("Wait");
     }
     
+    // キーコードを16進数表示（常に表示）
+    display.setCursor(100, 0);
+    display.printf("0x%02X", keycode);
+    
     // キー入力を大きく表示（中央部）
     display.setTextSize(2);  // サイズを少し小さく調整
     
@@ -199,18 +203,17 @@ void DisplayController::showKeyPress(char keyChar, uint8_t keycode) {
         display.print(specialKeyName);
     }
     else {
-        // 未知のキー
-        display.setCursor(40, 25);
+        // 未知のキーも必ず表示 (バイナリデータとして)
+        char hexStr[8];
+        snprintf(hexStr, sizeof(hexStr), "0x%02X", keycode);
+        
+        display.setCursor(20, 25);
         display.print("Key:");
-        display.print(specialKeyName);
+        display.print(hexStr);
     }
     
-    // キーコードを16進数表示（調査用）
-    display.setTextSize(1);
-    display.setCursor(100, 0);
-    display.printf("0x%02X", keycode);
-    
     // 入力履歴を小さく表示（下部）
+    display.setTextSize(1);
     display.setCursor(0, 56);
     // 最後の16文字だけ表示
     if (displayText.length() > 16) {

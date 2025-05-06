@@ -525,8 +525,7 @@ void EspUsbHost::_onReceive(usb_transfer_t *transfer) {
   EspUsbHost *usbHost = (EspUsbHost *)transfer->context;
   endpoint_data_t *endpoint_data = &usbHost->endpoint_data_list[(transfer->bEndpointAddress & USB_B_ENDPOINT_ADDRESS_EP_NUM_MASK)];
 
-  // デバッグ出力
-  #if (defined(USB_DEBUG_DETAIL) && USB_DEBUG_DETAIL == 1)
+  // 生データのデバッグ出力 - すべての入力をログに記録
   {
     String buffer_str = "";
     for (int i = 0; i < transfer->actual_num_bytes; i++) {
@@ -536,96 +535,87 @@ void EspUsbHost::_onReceive(usb_transfer_t *transfer) {
       buffer_str += String(transfer->data_buffer[i], HEX) + " ";
     }
     buffer_str.trim();
-    Serial.printf("USB受信データ: EP=0x%x Class=0x%x SubClass=0x%x Protocol=0x%x Data=[%s]\n",
+    Serial.printf("USB入力生データ: EP=0x%x Class=0x%x SubClass=0x%x Protocol=0x%x Data=[%s]\n",
            transfer->bEndpointAddress,
            endpoint_data->bInterfaceClass,
            endpoint_data->bInterfaceSubClass,
            endpoint_data->bInterfaceProtocol,
            buffer_str.c_str());
   }
-  #endif
 
   if (endpoint_data->bInterfaceClass == USB_CLASS_HID) {
-    // HIDデバイス検出をデバッグ表示
-    #if DEBUG_OUTPUT
+    // HIDデバイス検出
     Serial.printf("HIDデバイス入力: SubClass=0x%x Protocol=0x%x\n", 
              endpoint_data->bInterfaceSubClass, 
              endpoint_data->bInterfaceProtocol);
-    #endif
 
     if (endpoint_data->bInterfaceSubClass == HID_SUBCLASS_BOOT) {
       if (endpoint_data->bInterfaceProtocol == HID_ITF_PROTOCOL_KEYBOARD) {
-        #if DEBUG_OUTPUT
         Serial.println("キーボード入力検出！");
-        #endif
         
         static hid_keyboard_report_t last_report = {};
 
-        // HID_KEY_NUM_LOCKの特別処理
-        if (transfer->actual_num_bytes > 2 && transfer->data_buffer[2] == HID_KEY_NUM_LOCK) {
-          #if DEBUG_OUTPUT
-          Serial.println("NumLock検出");
-          #endif
-        } 
-        else {
-          // キーボードレポートの作成
-          hid_keyboard_report_t report = {};
-          
-          // データが少なくとも8バイトあることを確認
-          if (transfer->actual_num_bytes >= 8) {
-            report.modifier = transfer->data_buffer[0];
-            report.reserved = transfer->data_buffer[1];
-            report.keycode[0] = transfer->data_buffer[2];
-            report.keycode[1] = transfer->data_buffer[3];
-            report.keycode[2] = transfer->data_buffer[4];
-            report.keycode[3] = transfer->data_buffer[5];
-            report.keycode[4] = transfer->data_buffer[6];
-            report.keycode[5] = transfer->data_buffer[7];
-          } else {
-            // データが少ない場合は、利用可能なバイトだけコピー
-            report.modifier = transfer->data_buffer[0];
-            // 安全のため残りをゼロで初期化
-            for (int i = 1; i < transfer->actual_num_bytes; i++) {
-              ((uint8_t*)&report)[i] = transfer->data_buffer[i];
-            }
+        // キーボードレポートの作成
+        hid_keyboard_report_t report = {};
+        
+        // データが少なくとも8バイトあることを確認
+        if (transfer->actual_num_bytes >= 8) {
+          report.modifier = transfer->data_buffer[0];
+          report.reserved = transfer->data_buffer[1];
+          report.keycode[0] = transfer->data_buffer[2];
+          report.keycode[1] = transfer->data_buffer[3];
+          report.keycode[2] = transfer->data_buffer[4];
+          report.keycode[3] = transfer->data_buffer[5];
+          report.keycode[4] = transfer->data_buffer[6];
+          report.keycode[5] = transfer->data_buffer[7];
+        } else {
+          // データが少ない場合は、利用可能なバイトだけコピー
+          report.modifier = transfer->data_buffer[0];
+          // 安全のため残りをゼロで初期化
+          for (int i = 1; i < transfer->actual_num_bytes && i < sizeof(report); i++) {
+            ((uint8_t*)&report)[i] = transfer->data_buffer[i];
           }
+        }
 
-          // キーコードの表示
-          #if DEBUG_OUTPUT
-          Serial.printf("キーコード: [%02x %02x %02x %02x %02x %02x] modifier: %02x\n",
-                  report.keycode[0], report.keycode[1], report.keycode[2],
-                  report.keycode[3], report.keycode[4], report.keycode[5],
-                  report.modifier);
-          #endif
+        // キーコードの表示 - 常に表示するよう変更
+        Serial.printf("キーコード: [%02x %02x %02x %02x %02x %02x] modifier: %02x\n",
+                report.keycode[0], report.keycode[1], report.keycode[2],
+                report.keycode[3], report.keycode[4], report.keycode[5],
+                report.modifier);
 
-          // キーボードイベント処理
-          usbHost->onKeyboard(report, last_report);
+        // キーボードイベント処理
+        usbHost->onKeyboard(report, last_report);
 
-          // シフトキーの状態を確認
-          bool shift = (report.modifier & KEYBOARD_MODIFIER_LEFTSHIFT) || 
-                      (report.modifier & KEYBOARD_MODIFIER_RIGHTSHIFT);
-          
-          // 各キーコードを処理
-          for (int i = 0; i < 6; i++) {
-            // 新しく押されたキーを検出（前回のレポートにないキー）
-            if (report.keycode[i] != 0 && !keyInReport(last_report, report.keycode[i])) {
+        // シフトキーの状態を確認
+        bool shift = (report.modifier & KEYBOARD_MODIFIER_LEFTSHIFT) || 
+                    (report.modifier & KEYBOARD_MODIFIER_RIGHTSHIFT);
+        
+        // 各キーコードを処理
+        for (int i = 0; i < 6; i++) {
+          // 新しく押されたキーを検出（前回のレポートにないキー）
+          if (report.keycode[i] != 0) {
+            // 前回のレポートになかったキーかをチェック
+            bool isNewKey = true;
+            for (int j = 0; j < 6; j++) {
+              if (last_report.keycode[j] == report.keycode[i]) {
+                isNewKey = false;
+                break;
+              }
+            }
+            
+            if (isNewKey) {
               uint8_t ascii = usbHost->getKeycodeToAscii(report.keycode[i], shift);
-              #if DEBUG_OUTPUT
               Serial.printf("新しいキー: ASCII=0x%02x, keycode=0x%02x, shift=%d\n", 
                       ascii, report.keycode[i], shift);
-              #endif
               usbHost->onKeyboardKey(ascii, report.keycode[i], report.modifier);
             }
           }
-
-          // 最新のレポートを保存
-          memcpy(&last_report, &report, sizeof(last_report));
         }
+
+        // 最新のレポートを保存
+        memcpy(&last_report, &report, sizeof(last_report));
       } else if (endpoint_data->bInterfaceProtocol == HID_ITF_PROTOCOL_MOUSE) {
-        #if DEBUG_OUTPUT
-        Serial.println("マウス入力検出");
-        #endif
-        
+        // マウス処理（既存コード）
         static uint8_t last_buttons = 0;
         hid_mouse_report_t report = {};
         
@@ -655,6 +645,25 @@ void EspUsbHost::_onReceive(usb_transfer_t *transfer) {
         // 移動イベント処理
         if (report.x != 0 || report.y != 0 || report.wheel != 0) {
           usbHost->onMouseMove(report);
+        }
+      }
+    } else {
+      // 非ブートプロトコルデバイスからのデータ処理
+      // 特殊なHIDデバイス用の処理を追加
+      Serial.printf("非標準HIDデバイス入力: SubClass=0x%x Protocol=0x%x\n",
+               endpoint_data->bInterfaceSubClass, endpoint_data->bInterfaceProtocol);
+      
+      // 特殊キーを検出するため、データバッファ内の非ゼロ値を探す
+      for (int i = 0; i < transfer->actual_num_bytes; i++) {
+        if (transfer->data_buffer[i] != 0) {
+          // 特殊キーコードとして処理
+          uint8_t specialKeycode = transfer->data_buffer[i];
+          Serial.printf("特殊キーコード検出: 0x%02X at index %d\n", specialKeycode, i);
+          
+          // 修飾キーではないとみなして、キーコードとして処理
+          uint8_t ascii = 0; // ASCIIは不明のため0
+          usbHost->onKeyboardKey(ascii, specialKeycode, 0);
+          break; // 最初の非ゼロ値のみ処理
         }
       }
     }

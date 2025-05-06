@@ -17,10 +17,8 @@ void sendKeyToBle(uint8_t keycode, uint8_t modifier);
 class MyEspUsbHost : public EspUsbHost {
 public:
   void onKeyboardKey(uint8_t ascii, uint8_t keycode, uint8_t modifier) override {
-    // キーコードとASCIIの両方をデバッグ出力
-    #if DEBUG_OUTPUT
+    // キーコードとASCIIの両方をデバッグ出力 - 常に出力するよう変更
     Serial.printf("Key pressed: ASCII=0x%02X, Keycode=0x%02X, Modifier=0x%02X\n", ascii, keycode, modifier);
-    #endif
 
     // 何かしらのキー入力があった
     if (keycode != 0) {
@@ -33,75 +31,22 @@ public:
       // BLEでキーを送信 - BLE接続時のみ（一度だけ送信）
       sendKeyToBle(keycode, modifier);
       
+      // 常にディスプレイに表示する（特殊キーも含め、すべてのキーコード）
+      displayController.showKeyPress((ascii >= 32 && ascii <= 126) ? (char)ascii : '?', keycode);
+      
+      // 印字可能文字の場合はテキストバッファに追加
       if (' ' <= ascii && ascii <= '~') {
         // 印字可能文字
-        #if DEBUG_OUTPUT
         Serial.printf("Printable char: %c\n", ascii);
-        #endif
-        
-        // テキストバッファに追加
         displayController.addDisplayText((char)ascii);
-        
-        // キー入力を表示
-        displayController.showKeyPress((char)ascii, keycode);
       } else if (ascii == '\r') {
         // 改行
-        #if DEBUG_OUTPUT
         Serial.println("Enter key");
-        #endif
-        
         displayController.addDisplayText('\n');
-        
-        // キー入力を表示
-        displayController.showKeyPress(CHAR_ENTER, keycode);
-      } else {
-        // その他の特殊キー
-        char displayChar = '?';
-        const char* keyName = "Unknown";
-        
-        switch (keycode) {
-          case 0x29: // ESC
-            keyName = "ESC";
-            displayChar = 'E';
-            break;
-          case 0x2A: // BACKSPACE
-            keyName = "BS";
-            displayChar = CHAR_LEFT;
-            break;
-          case 0x2B: // TAB
-            keyName = "TAB";
-            displayChar = 'T';
-            break;
-          case 0x4F: // 右矢印
-            keyName = "RIGHT";
-            displayChar = CHAR_RIGHT;
-            break;
-          case 0x50: // 左矢印
-            keyName = "LEFT";
-            displayChar = CHAR_LEFT;
-            break;
-          case 0x51: // 下矢印
-            keyName = "DOWN";
-            displayChar = CHAR_DOWN;
-            break;
-          case 0x52: // 上矢印
-            keyName = "UP";
-            displayChar = CHAR_UP;
-            break;
-          default:
-            // 不明なキーはコードを16進数で表示
-            snprintf(lastKeyCodeText, sizeof(lastKeyCodeText), "0x%02X", keycode);
-            keyName = lastKeyCodeText;
-            break;
-        }
-        
-        #if DEBUG_OUTPUT
-        Serial.printf("Special key: %s (0x%02X)\n", keyName, keycode);
-        #endif
-        
-        // キー入力を表示
-        displayController.showKeyPress(displayChar, keycode);
       }
+      
+      // キーコードを16進数で表示（常に表示）
+      Serial.printf("KeyCode: 0x%02X\n", keycode);
     }
   }
   
@@ -590,10 +535,14 @@ void sendKeyToBle(uint8_t keycode, uint8_t modifier) {
       return;
     
     default:
+      // どのケースにも当てはまらない未知のキーの場合
       #if DEBUG_OUTPUT
-      Serial.printf("未対応のキーコード: 0x%02X\n", keycode);
+      Serial.printf("未対応のキーコード検出: 0x%02X - 生のキーコードとして送信\n", keycode);
       #endif
-      return;
+      
+      // 未知のキーも生のキーコードとして送信（生のキーコードとして送信）
+      bleKeycode = keycode;
+      handleAsRawKeycode = true;
   }
   
   // キーを単一のイベントとして送信（1回の書き込み操作）
@@ -603,7 +552,7 @@ void sendKeyToBle(uint8_t keycode, uint8_t modifier) {
   #endif
   
   if (handleAsRawKeycode) {
-    // 生のキーコードとして送信（特殊な言語キーなど）
+    // 生のキーコードとして送信（特殊な言語キーや未知のキーなど）
     if (modifier) {
       // 修飾キーと組み合わせる場合
       if (modifier & KEYBOARD_MODIFIER_LEFTCTRL) bleKeyboard.press(KEY_LEFT_CTRL);
