@@ -170,50 +170,51 @@ void DisplayController::showKeyPress(char keyChar, uint8_t keycode) {
     // BLEステータスを表示
     display.print("BLE: ");
     if (bleConnected) {
-        display.println("Con");
+        display.print("Con");
     } else {
-        display.println("Wait");
+        display.print("Wait");
     }
     
-    // キーコードを16進数表示（常に表示）
-    display.setCursor(100, 0);
-    display.printf("0x%02X", keycode);
+    // バイナリキーコードを大きく中央に表示
+    display.setTextSize(2);
+    char hexCodeStr[8];
+    sprintf(hexCodeStr, "0x%02X", keycode);
     
-    // キー入力を大きく表示（中央部）
-    display.setTextSize(2);  // サイズを少し小さく調整
+    // 中央に配置
+    int16_t textWidth = strlen(hexCodeStr) * 12; // 大まかな幅を計算
+    display.setCursor((SCREEN_WIDTH - textWidth) / 2, 20);
+    display.print(hexCodeStr);
+    
+    // 特殊キー名やASCII文字を表示（その下に小さく）
+    display.setTextSize(1);
     
     // キーコードから特殊キーの表示名を取得
     const char* specialKeyName = getSpecialKeyName(keycode);
     
-    // 印字可能文字の場合
-    if (' ' <= keyChar && keyChar <= '~') {
-        display.setCursor(56, 25);
-        display.print(keyChar);
-    }
-    // 特殊キーの場合
-    else if (keyChar == CHAR_ENTER || keyChar == CHAR_LEFT || 
-             keyChar == CHAR_RIGHT || keyChar == CHAR_UP || 
-             keyChar == CHAR_DOWN || specialKeyName[0] != '0') {
-        // 特殊キー名を中央に表示
-        int16_t nameLen = strlen(specialKeyName) * 12;  // 大まかな幅を計算
-        int16_t xPos = (SCREEN_WIDTH - nameLen) / 2;
-        if (xPos < 0) xPos = 0;
-        
-        display.setCursor(xPos, 25);
+    // 特殊キー名があれば表示
+    if (specialKeyName[0] != '0') { // 特殊キー名がある場合
+        int16_t nameWidth = strlen(specialKeyName) * 6;
+        display.setCursor((SCREEN_WIDTH - nameWidth) / 2, 40);
         display.print(specialKeyName);
     }
+    // 印字可能文字の場合は特殊キーの下に表示
+    else if (' ' <= keyChar && keyChar <= '~') {
+        char charStr[3] = {keyChar, 0};
+        int16_t nameWidth = strlen(charStr) * 6;
+        display.setCursor((SCREEN_WIDTH - nameWidth) / 2, 40);
+        display.print(charStr);
+    }
+    // 未知のキーの場合は何も表示しない（既にバイナリコードが中央に表示されている）
     else {
-        // 未知のキーも必ず表示 (バイナリデータとして)
-        char hexStr[8];
-        snprintf(hexStr, sizeof(hexStr), "0x%02X", keycode);
-        
-        display.setCursor(20, 25);
-        display.print("Key:");
-        display.print(hexStr);
+        // 未知のキーも表示
+        char unknownStr[16];
+        sprintf(unknownStr, "unknown key");
+        int16_t nameWidth = strlen(unknownStr) * 6;
+        display.setCursor((SCREEN_WIDTH - nameWidth) / 2, 40);
+        display.print(unknownStr);
     }
     
-    // 入力履歴を小さく表示（下部）
-    display.setTextSize(1);
+    // 入力履歴を表示（下部）
     display.setCursor(0, 56);
     // 最後の16文字だけ表示
     if (displayText.length() > 16) {
@@ -222,6 +223,7 @@ void DisplayController::showKeyPress(char keyChar, uint8_t keycode) {
         display.print(displayText);
     }
     
+    // 最後に表示を更新
     display.display();
 }
 
