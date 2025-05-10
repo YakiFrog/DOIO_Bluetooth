@@ -20,6 +20,12 @@ public:
   // 入力表示のための変数
   bool needsUpdate = false;
   
+  // デバイス情報を保存するための変数
+  String deviceManufacturer = "";
+  String deviceProduct = "";
+  String deviceSerialNum = "";
+  bool deviceConnected = false;
+  
   // キーボードの状態を保持するための変数
   uint8_t lastKeycode = 0;          // 最後に押されたキー
   unsigned long keyPressStartTime = 0; // キーが押された時間
@@ -30,6 +36,54 @@ public:
   
   // キーの現在の状態を記録する変数
   bool keyState[256] = {false}; // すべてのキーコードに対応するための配列
+  
+  // EspUsbHostのコールバックをオーバーライドして、デバイス情報を取得
+  void onNewDevice(const usb_device_info_t &dev_info) {
+    deviceManufacturer = getUsbDescString(dev_info.str_desc_manufacturer);
+    deviceProduct = getUsbDescString(dev_info.str_desc_product);
+    deviceSerialNum = getUsbDescString(dev_info.str_desc_serial_num);
+    deviceConnected = true;
+    needsUpdate = true; // 画面更新のフラグを立てる
+    
+    Serial.println("新しいキーボード接続:");
+    Serial.print("製造元: "); 
+    if (deviceManufacturer.length() > 0) {
+      Serial.println(deviceManufacturer);
+    } else {
+      Serial.println("情報なし");
+    }
+    
+    Serial.print("製品名: ");
+    if (deviceProduct.length() > 0) {
+      Serial.println(deviceProduct);
+    } else {
+      Serial.println("情報なし");
+    }
+    
+    Serial.print("シリアル番号: ");
+    if (deviceSerialNum.length() > 0) {
+      Serial.println(deviceSerialNum);
+    } else {
+      Serial.println("情報なし");
+    }
+    
+    // デバイスの詳細情報も表示
+    Serial.printf("デバイス速度: %d\n", dev_info.speed);
+    Serial.printf("デバイスアドレス: %d\n", dev_info.dev_addr);
+    Serial.printf("最大パケットサイズ: %d\n", dev_info.bMaxPacketSize0);
+    Serial.printf("コンフィグ値: %d\n", dev_info.bConfigurationValue);
+  }
+  
+  // デバイスが取り外されたときの処理
+  void onGone(const usb_host_client_event_msg_t *eventMsg) override {
+    deviceConnected = false;
+    deviceManufacturer = "";
+    deviceProduct = "";
+    deviceSerialNum = "";
+    needsUpdate = true;
+    
+    Serial.println("キーボードが取り外されました");
+  }
   
   // キーボードイベントのオーバーライド
   void onKeyboard(hid_keyboard_report_t report, hid_keyboard_report_t last_report) override {
@@ -182,23 +236,44 @@ public:
     // 画面全体をクリア
     tft.fillScreen(ST77XX_BLACK);
     
-    // タイトルを表示
+    // タイトルを表示（小さいサイズで）
     tft.setCursor(0, 5);
     tft.setTextColor(ST77XX_WHITE);
-    tft.setTextSize(2);
+    tft.setTextSize(1);  // サイズを1に縮小
     tft.println("USB Keyboard");
     
-    // 区切り線
-    tft.drawLine(0, 25, tft.width(), 25, ST77XX_YELLOW);
+    // 区切り線（タイトルが小さくなったので上に移動）
+    tft.drawLine(0, 15, tft.width(), 15, ST77XX_YELLOW);
     
-    // 入力されたテキスト表示のヘッダー
-    tft.setCursor(0, 30);
+    // デバイス情報または待機メッセージの表示
+    tft.setCursor(0, 20);
     tft.setTextColor(ST77XX_CYAN);
     tft.setTextSize(1);
+    
+    if (deviceConnected) {
+      // 接続されたキーボードの情報を表示
+      tft.print("Mfr: ");
+      // 製造元情報が空の場合は「不明」と表示
+      String mfrText = deviceManufacturer.length() > 0 ? deviceManufacturer : "Unknown";
+      tft.setTextColor(ST77XX_CYAN);
+      tft.println(mfrText.length() > 10 ? mfrText.substring(0, 10) + "..." : mfrText);
+      
+      tft.setCursor(0, 30);
+      tft.print("Dev: ");
+      // 製品名情報が空の場合は「不明」と表示
+      String devText = deviceProduct.length() > 0 ? deviceProduct : "Unknown";
+      tft.setTextColor(ST77XX_CYAN);
+      tft.println(devText.length() > 10 ? devText.substring(0, 10) + "..." : devText);
+    } else {
+      tft.println("Waiting for keyboard...");
+    }
+    
+    // 入力されたテキスト表示のヘッダー
+    tft.setCursor(0, 45);
     tft.println("Input:");
     
     // 入力されたテキストを表示（1行に修正）
-    tft.setCursor(0, 50);  // 表示位置を中央付近に調整
+    tft.setCursor(0, 55);  // 表示位置の調整
     tft.setTextColor(ST77XX_GREEN);
     tft.setTextSize(2);  // テキストサイズを大きく
     
@@ -254,17 +329,17 @@ void setup(void) {
   // 初期画面を表示
   display.tft.fillScreen(ST77XX_BLACK);
   
-  // タイトル
+  // タイトル（小さいサイズで）
   display.tft.setCursor(0, 5);
   display.tft.setTextColor(ST77XX_WHITE);
-  display.tft.setTextSize(2);
+  display.tft.setTextSize(1);  // サイズを1に縮小
   display.tft.println("USB Keyboard");
   
-  // 区切り線
-  display.tft.drawLine(0, 25, display.tft.width(), 25, ST77XX_YELLOW);
+  // 区切り線（タイトルが小さくなったので上に移動）
+  display.tft.drawLine(0, 15, display.tft.width(), 15, ST77XX_YELLOW);
   
   // 説明
-  display.tft.setCursor(0, 35);
+  display.tft.setCursor(0, 20);
   display.tft.setTextColor(ST77XX_CYAN);
   display.tft.setTextSize(1);
   display.tft.println("Waiting for keyboard...");

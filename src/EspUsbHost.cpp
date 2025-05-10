@@ -71,9 +71,7 @@ void EspUsbHost::_clientEventCallback(const usb_host_client_event_msg_t *eventMs
         ESP_LOGI("EspUsbHost", "usb_host_device_open() err=%x", err);
       } else {
         ESP_LOGI("EspUsbHost", "usb_host_device_open() ESP_OK");
-      }
-
-      usb_device_info_t dev_info;
+      }      usb_device_info_t dev_info;
       err = usb_host_device_info(usbHost->deviceHandle, &dev_info);
       if (err != ESP_OK) {
         ESP_LOGI("EspUsbHost", "usb_host_device_info() err=%x", err);
@@ -93,6 +91,9 @@ void EspUsbHost::_clientEventCallback(const usb_host_client_event_msg_t *eventMs
                  getUsbDescString(dev_info.str_desc_manufacturer).c_str(),
                  getUsbDescString(dev_info.str_desc_product).c_str(),
                  getUsbDescString(dev_info.str_desc_serial_num).c_str());
+
+        // デバイス情報を子クラスに通知
+        usbHost->onNewDevice(dev_info);
       }
 
       const usb_device_desc_t *dev_desc;
