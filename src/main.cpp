@@ -19,6 +19,10 @@ uint32_t lastMinFreeHeap = 0;
 uint8_t lastUsedPercentage = 0;
 bool needFullRedraw = true; // 完全な再描画が必要かのフラグ
 
+// 表示が消えるのを防ぐためのカウンター
+uint8_t updateCounter = 0;
+uint8_t forceRedrawInterval = 10; // この回数ごとに強制的に再描画
+
 void showMemoryInfo();
 
 void setup(void) {
@@ -51,24 +55,25 @@ void setup(void) {
 }
 
 void loop() {
-  // メモリ情報の定期更新（チラつき軽減のため更新頻度を下げる）
+  // メモリ情報の定期更新
   static unsigned long lastUpdate = 0;
   if (millis() - lastUpdate > 3000) {  // 3秒ごとに更新
     lastUpdate = millis();
     
-    // メモリ情報を表示（部分更新機能付き）
-    showMemoryInfo();
-    
-    // 10回に1回のみ完全再描画フラグを立てる（チラつき軽減）
-    static int updateCounter = 0;
-    updateCounter = (updateCounter + 1) % 10;
-    if (updateCounter == 0) {
+    // 定期的に強制再描画フラグを立てる (表示が消えるのを防ぐため)
+    updateCounter++;
+    if (updateCounter >= forceRedrawInterval) {
+      updateCounter = 0;
       needFullRedraw = true;
+      Serial.println(F("強制的に画面をリフレッシュします"));
     }
+    
+    // メモリ情報を表示
+    showMemoryInfo();
   }
 }
 
-// メモリ情報表示関数（部分更新対応）
+// メモリ情報表示関数（常に表示されるよう改良）
 void showMemoryInfo() {
   // ESP32のメモリ情報を取得
   uint32_t freeHeap = ESP.getFreeHeap();
@@ -96,84 +101,70 @@ void showMemoryInfo() {
     tft.setCursor(0, 0);
     tft.setTextColor(ST77XX_WHITE);
     tft.println("ESP32 Memory Monitor");
-    
-    needFullRedraw = false;
   }
   
-  // 変化があったデータのみ更新（チラつき軽減のため）
-  if (freeHeap != lastFreeHeap || needFullRedraw) {
-    tft.fillRect(0, 10, tft.width(), 10, ST77XX_BLACK);
-    tft.setCursor(0, 10);
-    tft.setTextColor(ST77XX_GREEN);
-    tft.print("Free: ");
-    tft.print(freeHeap / 1024);
-    tft.println(" KB");
-    lastFreeHeap = freeHeap;
+  // 常にデータを表示（needFullRedrawフラグに関係なく）
+  // 空きメモリ表示
+  tft.fillRect(0, 10, tft.width(), 10, ST77XX_BLACK);
+  tft.setCursor(0, 10);
+  tft.setTextColor(ST77XX_GREEN);
+  tft.print("Free: ");
+  tft.print(freeHeap / 1024);
+  tft.println(" KB");
+  lastFreeHeap = freeHeap;
+  
+  // 合計メモリ表示
+  tft.fillRect(0, 20, tft.width(), 10, ST77XX_BLACK);
+  tft.setCursor(0, 20);
+  tft.setTextColor(ST77XX_GREEN);
+  tft.print("Total: ");
+  tft.print(totalHeap / 1024);
+  tft.println(" KB");
+  
+  // 最小空きメモリ表示
+  tft.fillRect(0, 30, tft.width(), 10, ST77XX_BLACK);
+  tft.setCursor(0, 30);
+  tft.setTextColor(ST77XX_CYAN);
+  tft.print("Min Free: ");
+  tft.print(minFreeHeap / 1024);
+  tft.println(" KB");
+  lastMinFreeHeap = minFreeHeap;
+  
+  // 使用率とプログレスバーの表示
+  // テキスト部分を更新
+  tft.fillRect(0, 40, tft.width(), 10, ST77XX_BLACK);
+  tft.setCursor(0, 40);
+  tft.setTextColor(ST77XX_YELLOW);
+  tft.print("Used: ");
+  tft.print(usedPercentage);
+  tft.println("%");
+  
+  // プログレスバーを描画
+  int barWidth = tft.width() - 20;  // 左右に少し余白を残す
+  int barHeight = 8;
+  int barX = 10;
+  int barY = tft.height() - 15;
+  
+  // プログレスバーの枠
+  tft.drawRect(barX, barY, barWidth, barHeight, ST77XX_WHITE);
+  
+  // プログレスバーの中身（一度黒でクリアしてから描画）
+  tft.fillRect(barX+1, barY+1, barWidth-2, barHeight-2, ST77XX_BLACK);
+  int filledWidth = ((barWidth-2) * usedPercentage) / 100;
+  if (filledWidth > 0) {
+    tft.fillRect(barX+1, barY+1, filledWidth, barHeight-2, ST77XX_RED);
   }
   
-  // 合計メモリは変わらないので初回のみ描画
-  static bool totalDrawn = false;
-  if (!totalDrawn || needFullRedraw) {
-    tft.fillRect(0, 20, tft.width(), 10, ST77XX_BLACK);
-    tft.setCursor(0, 20);
-    tft.setTextColor(ST77XX_GREEN);
-    tft.print("Total: ");
-    tft.print(totalHeap / 1024);
-    tft.println(" KB");
-    totalDrawn = true;
-  }
-  
-  if (minFreeHeap != lastMinFreeHeap || needFullRedraw) {
-    tft.fillRect(0, 30, tft.width(), 10, ST77XX_BLACK);
-    tft.setCursor(0, 30);
-    tft.setTextColor(ST77XX_CYAN);
-    tft.print("Min Free: ");
-    tft.print(minFreeHeap / 1024);
-    tft.println(" KB");
-    lastMinFreeHeap = minFreeHeap;
-  }
-  
-  // 使用率は数字とプログレスバーを更新
-  if (usedPercentage != lastUsedPercentage || needFullRedraw) {
-    // テキスト部分を更新
-    tft.fillRect(0, 40, tft.width(), 10, ST77XX_BLACK);
-    tft.setCursor(0, 40);
-    tft.setTextColor(ST77XX_YELLOW);
-    tft.print("Used: ");
-    tft.print(usedPercentage);
-    tft.println("%");
-    
-    // プログレスバーを描画
-    int barWidth = tft.width() - 20;  // 左右に少し余白を残す
-    int barHeight = 8;
-    int barX = 10;
-    int barY = tft.height() - 15;
-    
-    // プログレスバーの枠（変化があった場合のみ再描画）
-    if (needFullRedraw) {
-      tft.drawRect(barX, barY, barWidth, barHeight, ST77XX_WHITE);
-    }
-    
-    // プログレスバーの中身（一度黒でクリアしてから描画）
-    tft.fillRect(barX+1, barY+1, barWidth-2, barHeight-2, ST77XX_BLACK);
-    int filledWidth = ((barWidth-2) * usedPercentage) / 100;
-    if (filledWidth > 0) {
-      tft.fillRect(barX+1, barY+1, filledWidth, barHeight-2, ST77XX_RED);
-    }
-    
-    lastUsedPercentage = usedPercentage;
-  }
+  lastUsedPercentage = usedPercentage;
   
   // 時間情報を更新
-  static unsigned long lastTimeUpdate = 0;
-  unsigned long currentTime = millis() / 1000;
-  if (currentTime != lastTimeUpdate || needFullRedraw) {
-    tft.fillRect(5, tft.height() - 25, tft.width() - 10, 10, ST77XX_BLACK);
-    tft.setCursor(5, tft.height() - 25);
-    tft.setTextColor(ST77XX_MAGENTA);
-    tft.print("Runtime: ");
-    tft.print(currentTime);
-    tft.print("s");
-    lastTimeUpdate = currentTime;
-  }
+  tft.fillRect(5, tft.height() - 25, tft.width() - 10, 10, ST77XX_BLACK);
+  tft.setCursor(5, tft.height() - 25);
+  tft.setTextColor(ST77XX_MAGENTA);
+  tft.print("Runtime: ");
+  tft.print(millis() / 1000);
+  tft.print("s");
+  
+  // 再描画フラグをリセット
+  needFullRedraw = false;
 }
