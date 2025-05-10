@@ -19,13 +19,18 @@ public:
     uint8_t bInterfaceProtocol;
     uint8_t bCountryCode;    
   };
-  endpoint_data_t endpoint_data_list[17];
-  uint8_t _bInterfaceNumber;
+  endpoint_data_t endpoint_data_list[17];  uint8_t _bInterfaceNumber;
   uint8_t _bInterfaceClass;
   uint8_t _bInterfaceSubClass;
   uint8_t _bInterfaceProtocol;
   uint8_t _bCountryCode;
   esp_err_t claim_err;
+    // デバイス識別用
+  uint16_t device_vendor_id;
+  uint16_t device_product_id;
+  
+  // DOIO KB16用キーマトリックスの状態管理
+  bool kb16_key_states[4][4];   // 4x4マトリックス
 
   usb_host_client_handle_t clientHandle;
   usb_device_handle_t deviceHandle;
@@ -52,6 +57,11 @@ public:
   virtual void onReceive(const usb_transfer_t *transfer){};
   virtual void onGone(const usb_host_client_event_msg_t *eventMsg){};
   virtual void onNewDevice(const usb_device_info_t &dev_info){};
+  
+  // DOIO KB16用メソッド
+  void updateKB16KeyState(uint8_t row, uint8_t col, bool pressed);
+  bool getKB16KeyState(uint8_t row, uint8_t col);
+  virtual void onKB16KeyStateChanged(uint8_t row, uint8_t col, bool pressed){};
 
   virtual uint8_t getKeycodeToAscii(uint8_t keycode, uint8_t shift);
   virtual void onKeyboard(hid_keyboard_report_t report, hid_keyboard_report_t last_report);

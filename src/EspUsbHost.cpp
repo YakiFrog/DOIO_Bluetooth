@@ -1,4 +1,52 @@
 #include "EspUsbHost.h"
+#include <class/hid/hid.h>
+
+// HIDキーコード定義（TinyUSBライブラリから必要なものを抽出）
+#define HID_KEY_1               0x1E
+#define HID_KEY_2               0x1F
+#define HID_KEY_3               0x20
+#define HID_KEY_4               0x21
+#define HID_KEY_5               0x22
+#define HID_KEY_6               0x23
+#define HID_KEY_7               0x24
+#define HID_KEY_8               0x25
+#define HID_KEY_9               0x26
+#define HID_KEY_0               0x27
+#define HID_KEY_ENTER           0x28
+#define HID_KEY_ESCAPE          0x29
+#define HID_KEY_BACKSPACE       0x2A
+#define HID_KEY_TAB             0x2B
+#define HID_KEY_SPACE           0x2C
+#define HID_KEY_RIGHT_ALT       0xE6
+
+// DOIO KB16 キーボード用マッピング
+// キーボードマトリックスマッピング構造体
+struct KeyMapping {
+    uint8_t byte_idx;  // レポート内のバイトインデックス
+    uint8_t bit_mask;  // ビットマスク (1 << bit)
+    uint8_t row;       // キーボードマトリックス行
+    uint8_t col;       // キーボードマトリックス列
+};
+
+// DOIO KB16キーマッピング
+const KeyMapping kb16_key_map[] = {
+    { 5, 0x20, 0, 0 },  // byte5_bit5, 変化回数: 80
+    { 1, 0x01, 0, 1 },  // byte1_bit0, 変化回数: 78
+    { 1, 0x02, 0, 2 },  // byte1_bit1, 変化回数: 44
+    { 5, 0x01, 0, 3 },  // byte5_bit0, 変化回数: 38
+    { 4, 0x01, 1, 0 },  // byte4_bit0, 変化回数: 36
+    { 5, 0x02, 1, 1 },  // byte5_bit1, 変化回数: 33
+    { 4, 0x08, 1, 2 },  // byte4_bit3, 変化回数: 24
+    { 4, 0x80, 1, 3 },  // byte4_bit7, 変化回数: 24
+    { 4, 0x02, 2, 0 },  // byte4_bit1, 変化回数: 24
+    { 4, 0x20, 2, 1 },  // byte4_bit5, 変化回数: 24
+    { 5, 0x08, 2, 2 },  // byte5_bit3, 変化回数: 24
+    { 4, 0x40, 2, 3 },  // byte4_bit6, 変化回数: 22
+    { 4, 0x10, 3, 0 },  // byte4_bit4, 変化回数: 20
+    { 5, 0x10, 3, 1 },  // byte5_bit4, 変化回数: 20
+    { 4, 0x04, 3, 2 },  // byte4_bit2, 変化回数: 18
+    { 5, 0x04, 3, 3 },  // byte5_bit2, 変化回数: 18
+};
 
 /**
  * PCAPフォーマットでUSB通信データをテキスト出力する関数
@@ -124,9 +172,7 @@ void EspUsbHost::_clientEventCallback(const usb_host_client_event_msg_t *eventMs
                  dev_info.bConfigurationValue,
                  getUsbDescString(dev_info.str_desc_manufacturer).c_str(),
                  getUsbDescString(dev_info.str_desc_product).c_str(),
-                 getUsbDescString(dev_info.str_desc_serial_num).c_str());
-
-        // デバイス情報を子クラスに通知（派生クラスで実装するコールバック）
+                 getUsbDescString(dev_info.str_desc_serial_num).c_str());        // デバイス情報を子クラスに通知（派生クラスで実装するコールバック）
         usbHost->onNewDevice(dev_info);
       }      // デバイスディスクリプタ（基本情報）を取得
       // デバイスディスクリプタにはベンダーID、製品ID、USBバージョンなどの基本情報が含まれる
@@ -135,6 +181,10 @@ void EspUsbHost::_clientEventCallback(const usb_host_client_event_msg_t *eventMs
       if (err != ESP_OK) {
         ESP_LOGI("EspUsbHost", "usb_host_get_device_descriptor() err=%x", err);
       } else {
+        // 製造元と製品名を出力
+        ESP_LOGI("EspUsbHost", "製造元: %s, 製品: %s", 
+                getUsbDescString(dev_info.str_desc_manufacturer).c_str(), 
+                getUsbDescString(dev_info.str_desc_product).c_str());
         // デバイスディスクリプタリクエストのセットアップパケット
         // 0x80: デバイスからホストへの転送（IN）
         // 0x06: GET_DESCRIPTOR リクエスト
@@ -164,8 +214,7 @@ void EspUsbHost::_clientEventCallback(const usb_host_client_event_msg_t *eventMs
                  dev_desc->bcdUSB,
                  dev_desc->bDeviceClass,
                  dev_desc->bDeviceSubClass,
-                 dev_desc->bDeviceProtocol,
-                 dev_desc->bMaxPacketSize0,
+                 dev_desc->bDeviceProtocol,                 dev_desc->bMaxPacketSize0,
                  dev_desc->idVendor,
                  dev_desc->idProduct,
                  dev_desc->bcdDevice,
@@ -173,6 +222,10 @@ void EspUsbHost::_clientEventCallback(const usb_host_client_event_msg_t *eventMs
                  dev_desc->iProduct,
                  dev_desc->iSerialNumber,
                  dev_desc->bNumConfigurations);
+                 
+        // デバイスのベンダーIDと製品IDを保存
+        usbHost->device_vendor_id = dev_desc->idVendor;
+        usbHost->device_product_id = dev_desc->idProduct;
       }      // アクティブなコンフィグレーションディスクリプタ（設定情報）を取得
       // コンフィグレーションディスクリプタにはデバイスの電源要件やインターフェース数などの情報が含まれる
       const usb_config_desc_t *config_desc;
@@ -627,9 +680,44 @@ void EspUsbHost::_onReceive(usb_transfer_t *transfer) {
            transfer->timeout_ms,
            transfer->num_isoc_packets);
 #endif
-
-  if (endpoint_data->bInterfaceClass == USB_CLASS_HID) {
-    if (endpoint_data->bInterfaceSubClass == HID_SUBCLASS_BOOT) {
+  if (endpoint_data->bInterfaceClass == USB_CLASS_HID) {    // DOIO KB16 キーボード特別処理
+    bool is_doio_kb16 = (usbHost->device_vendor_id == 0xD010 && usbHost->device_product_id == 0x1601);
+    
+    if (is_doio_kb16) {
+      ESP_LOGI("KB16", "DOIO KB16からのデータ受信: %d バイト", transfer->actual_num_bytes);
+      
+      // レポート内容をログに出力
+      if (transfer->actual_num_bytes > 0) {
+        String data_str = "データ:";
+        for (int i = 0; i < transfer->actual_num_bytes && i < 16; i++) {  // 最初の16バイトまで表示
+          char buf[8];
+          sprintf(buf, " %02X", transfer->data_buffer[i]);
+          data_str += buf;
+        }
+        ESP_LOGI("KB16", "%s", data_str.c_str());
+      }
+      
+      // HIDレポートとしてデータを処理
+      static hid_keyboard_report_t last_report = {};
+      hid_keyboard_report_t report = {};      
+      // 標準のHIDキーボードレポート要素を埋める
+      report.modifier = transfer->data_buffer[0];
+      
+      // reservedフィールドは使っていないので、ここにポインタは入れられない
+      // 代わりにキーコード配列の最初の要素にデータバイトを入れる（識別用）
+      report.reserved = 0xAA; // 特殊な値を設定して、DOIO KB16であることを表す
+      
+      // キーコード配列にデータをコピー
+      for (int i = 0; i < sizeof(report.keycode) && i < transfer->actual_num_bytes; i++) {
+        report.keycode[i] = transfer->data_buffer[i + 1]; // 1バイトずらして保存（最初のバイトはmodifier）
+      }
+        // キーボード処理コールバックを呼び出す
+      usbHost->onKeyboard(report, last_report);
+      
+      // 前回の状態を保存
+      memcpy(&last_report, &report, sizeof(last_report));
+    }
+    else if (endpoint_data->bInterfaceSubClass == HID_SUBCLASS_BOOT) {
       if (endpoint_data->bInterfaceProtocol == HID_ITF_PROTOCOL_KEYBOARD) {
         static hid_keyboard_report_t last_report = {};
 
@@ -645,9 +733,7 @@ void EspUsbHost::_onReceive(usb_transfer_t *transfer) {
           report.keycode[2] = transfer->data_buffer[4];
           report.keycode[3] = transfer->data_buffer[5];
           report.keycode[4] = transfer->data_buffer[6];
-          report.keycode[5] = transfer->data_buffer[7];
-
-          usbHost->onKeyboard(report, last_report);
+          report.keycode[5] = transfer->data_buffer[7];          usbHost->onKeyboard(report, last_report);
 
           bool shift = (report.modifier & KEYBOARD_MODIFIER_LEFTSHIFT) || (report.modifier & KEYBOARD_MODIFIER_RIGHTSHIFT);
           for (int i = 0; i < 6; i++) {
@@ -664,8 +750,7 @@ void EspUsbHost::_onReceive(usb_transfer_t *transfer) {
         hid_mouse_report_t report = {};
         report.buttons = transfer->data_buffer[1];
         report.x = (uint8_t)transfer->data_buffer[2];
-        report.y = (uint8_t)transfer->data_buffer[4];
-        report.wheel = (uint8_t)transfer->data_buffer[6];
+        report.y = (uint8_t)transfer->data_buffer[4];        report.wheel = (uint8_t)transfer->data_buffer[6];
         usbHost->onMouse(report, last_buttons);
         if (report.buttons != last_buttons) {
           usbHost->onMouseButtons(report, last_buttons);
@@ -676,7 +761,7 @@ void EspUsbHost::_onReceive(usb_transfer_t *transfer) {
         }
       }
     } else {
-      //usbHost->_onReceiveGamepad();
+      //this->_onReceiveGamepad();
     }
   }
 
@@ -790,6 +875,117 @@ void EspUsbHost::onKeyboard(hid_keyboard_report_t report, hid_keyboard_report_t 
            report.keycode[4],
            last_report.keycode[5],
            report.keycode[5]);
+  
+  // DOIO KB16カスタムキー解析
+  if (device_product_id == 0x1601 && device_vendor_id == 0xD010) {
+    ESP_LOGI("KB16", "DOIO KB16キーボード処理 (VID=0x%04X, PID=0x%04X)", device_vendor_id, device_product_id);
+    // キー状態が変化したことを示すフラグ
+    static bool first_report = true;
+    bool key_state_changed = false;
+    
+    // 特殊な値(0xAA)をチェック - DOIO KB16からのデータかどうかを確認
+    if (report.reserved == 0xAA) {
+      // レポートの詳細をログに出力（初回のみ全データ）
+      if (first_report) {
+        String full_data = "KB16レポート検出: ";
+        full_data += String("modifier=") + String(report.modifier, HEX) + " ";
+        
+        for (int i = 0; i < 6; i++) {
+          char buf[16];
+          sprintf(buf, "key%d=0x%02X ", i, report.keycode[i]);
+          full_data += buf;
+        }
+        
+        ESP_LOGI("KB16", "%s", full_data.c_str());
+        first_report = false;
+      }
+        // onKeyboard関数内ではキーコードデータからキーマトリックス状態を計算
+      uint8_t kb16_data[32] = {0};
+      uint8_t kb16_last_data[32] = {0};
+      
+      // キーコードフィールドからデータを取得
+      // 基本的に最初の6バイトにデータが格納されている
+      for (int i = 0; i < 6 && i < 32; i++) {
+        kb16_data[i] = report.keycode[i];
+        kb16_last_data[i] = last_report.keycode[i];
+      }
+      
+      // 各キーマッピングをチェック
+      for (int i = 0; i < sizeof(kb16_key_map) / sizeof(KeyMapping); i++) {
+        const KeyMapping& mapping = kb16_key_map[i];
+        
+        // マッピング情報を一度表示（デバッグ用）
+        ESP_LOGD("KB16", "マッピング[%d]: バイト=%d, ビット=0x%02X, 行=%d, 列=%d", 
+                i, mapping.byte_idx, mapping.bit_mask, mapping.row, mapping.col);
+        
+        // バイトインデックスが範囲内かチェック
+        if (mapping.byte_idx < 32) {
+          uint8_t current_byte = kb16_data[mapping.byte_idx];
+          uint8_t last_byte = kb16_last_data[mapping.byte_idx];
+          
+          bool current_state = (current_byte & mapping.bit_mask) != 0;
+          bool last_state = (last_byte & mapping.bit_mask) != 0;
+          
+          // 状態が変化した場合
+          if (current_state != last_state) {
+            key_state_changed = true;
+            ESP_LOGI("KB16", "キー (%d,%d) %s [バイト%d:0x%02X, ビット:0x%02X]", 
+                    mapping.row, mapping.col, 
+                    current_state ? "押下" : "解放",
+                    mapping.byte_idx, current_byte, mapping.bit_mask);
+            
+            // キーマトリックス状態を更新
+            updateKB16KeyState(mapping.row, mapping.col, current_state);
+            
+            // HIDキーコードに変換
+            uint8_t hid_keycode = 0;
+            
+            // 行と列の組み合わせに基づいて特定のキーコードに変換
+            if (mapping.row == 0 && mapping.col == 0) hid_keycode = HID_KEY_1; // 1キー
+            else if (mapping.row == 0 && mapping.col == 1) hid_keycode = HID_KEY_2; // 2キー
+            else if (mapping.row == 0 && mapping.col == 2) hid_keycode = HID_KEY_3; // 3キー
+            else if (mapping.row == 0 && mapping.col == 3) hid_keycode = HID_KEY_4; // 4キー
+            else if (mapping.row == 1 && mapping.col == 0) hid_keycode = HID_KEY_5; // 5キー
+            else if (mapping.row == 1 && mapping.col == 1) hid_keycode = HID_KEY_6; // 6キー
+            else if (mapping.row == 1 && mapping.col == 2) hid_keycode = HID_KEY_7; // 7キー
+            else if (mapping.row == 1 && mapping.col == 3) hid_keycode = HID_KEY_8; // 8キー
+            else if (mapping.row == 2 && mapping.col == 0) hid_keycode = HID_KEY_9; // 9キー
+            else if (mapping.row == 2 && mapping.col == 1) hid_keycode = HID_KEY_0; // 0キー
+            else if (mapping.row == 2 && mapping.col == 2) hid_keycode = HID_KEY_ENTER; // Enterキー
+            else if (mapping.row == 2 && mapping.col == 3) hid_keycode = HID_KEY_ESCAPE; // Escキー
+            else if (mapping.row == 3 && mapping.col == 0) hid_keycode = HID_KEY_BACKSPACE; // Backspaceキー
+            else if (mapping.row == 3 && mapping.col == 1) hid_keycode = HID_KEY_TAB; // Tabキー
+            else if (mapping.row == 3 && mapping.col == 2) hid_keycode = HID_KEY_SPACE; // Spaceキー
+            else if (mapping.row == 3 && mapping.col == 3) hid_keycode = HID_KEY_RIGHT_ALT; // 右Altキー
+            
+            // 仮想的なキー入力を生成
+            if (current_state) {
+              // キーが押された場合の処理
+              ESP_LOGI("KB16", "キー押下: HIDコード=0x%02X", hid_keycode);
+              // ここで外部システムに通知する処理を追加
+              // 例: BLEキーボードの場合はBLEで送信する
+            } else {
+              // キーが離された場合の処理
+              ESP_LOGI("KB16", "キー解放: HIDコード=0x%02X", hid_keycode);
+              // ここで外部システムに通知する処理を追加
+            }
+              // 派生クラスに通知
+            onKB16KeyStateChanged(mapping.row, mapping.col, current_state);
+          }
+        } else {
+          ESP_LOGW("KB16", "バイトインデックス範囲外: %d", mapping.byte_idx);
+        }
+      }
+    } else {
+      ESP_LOGW("KB16", "KB16データが無効です");
+    }
+    
+    if (key_state_changed) {
+      ESP_LOGI("KB16", "キー状態が変化しました");
+      // キー状態が変化した場合の全体的な処理
+      // 例: LEDの更新など
+    }
+  }
 }
 
 uint8_t EspUsbHost::getKeycodeToAscii(uint8_t keycode, uint8_t shift) {
