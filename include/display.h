@@ -22,9 +22,10 @@ public:
     // メモリ情報表示関数
     void showMemoryInfo(bool forceRedraw = false);
     
-private:
-    // ハードウェアSPIを使用したST7735ディスプレイのインスタンス
+    // 表示用のTFTインスタンス（外部からアクセス可能）
     Adafruit_ST7735 tft;
+    
+private:
     
     // メモリ情報変数（前回値の保存用）
     uint32_t lastFreeHeap;
