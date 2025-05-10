@@ -1,5 +1,17 @@
 #include "EspUsbHost.h"
 
+/**
+ * PCAPフォーマットでUSB通信データをテキスト出力する関数
+ * 
+ * @param title タイトル（出力の説明）
+ * @param function USB機能コード
+ * @param direction データの方向（0:OUT 1:IN）
+ * @param endpoint エンドポイント番号
+ * @param type 転送タイプ
+ * @param size データサイズ
+ * @param stage 転送ステージ
+ * @param data 実際のデータバッファ
+ */
 void EspUsbHost::_printPcapText(const char *title, uint16_t function, uint8_t direction, uint8_t endpoint, uint8_t type, uint8_t size, uint8_t stage, const uint8_t *data) {
 #if (ARDUHAL_LOG_LEVEL >= ARDUHAL_LOG_LEVEL_INFO)
   uint8_t urbsize = 0x1c;
@@ -29,12 +41,18 @@ void EspUsbHost::_printPcapText(const char *title, uint16_t function, uint8_t di
 #endif
 }
 
+/**
+ * USBホスト機能の初期化を行うメソッド
+ * USBスタックのインストール、クライアント登録を実施
+ */
 void EspUsbHost::begin(void) {
+  // 転送領域の初期化
   usbTransferSize = 0;
 
+  // USBホスト設定構造体
   const usb_host_config_t config = {
-    .skip_phy_setup = false,
-    .intr_flags = ESP_INTR_FLAG_LEVEL1,
+    .skip_phy_setup = false,  // PHYセットアップを行う
+    .intr_flags = ESP_INTR_FLAG_LEVEL1,  // 割り込み優先度
   };
   esp_err_t err = usb_host_install(&config);
   if (err != ESP_OK) {
@@ -42,13 +60,13 @@ void EspUsbHost::begin(void) {
   } else {
     ESP_LOGI("EspUsbHost", "usb_host_install() ESP_OK");
   }
-
+  // USBホストクライアント設定構造体
   const usb_host_client_config_t client_config = {
-    .is_synchronous = true,
-    .max_num_event_msg = 10,
+    .is_synchronous = true,             // 同期モードで動作
+    .max_num_event_msg = 10,            // イベントメッセージの最大数
     .async = {
-      .client_event_callback = this->_clientEventCallback,
-      .callback_arg = this,
+      .client_event_callback = this->_clientEventCallback,  // コールバック関数の設定
+      .callback_arg = this,                                 // コールバック関数の引数（このオブジェクト）
     }
   };
   err = usb_host_client_register(&client_config, &this->clientHandle);
@@ -59,31 +77,47 @@ void EspUsbHost::begin(void) {
   }
 }
 
+/**
+ * USBホストクライアントイベントのコールバック関数
+ * デバイスの接続・切断時に呼び出される
+ * 
+ * @param eventMsg イベントメッセージ
+ * @param arg コールバック引数（EspUsbHostオブジェクト）
+ */
 void EspUsbHost::_clientEventCallback(const usb_host_client_event_msg_t *eventMsg, void *arg) {
+  // 引数からEspUsbHostオブジェクトを取得
   EspUsbHost *usbHost = (EspUsbHost *)arg;
 
-  esp_err_t err;
-  switch (eventMsg->event) {
+  esp_err_t err;  switch (eventMsg->event) {
+    // 新しいUSBデバイスが接続された場合
     case USB_HOST_CLIENT_EVENT_NEW_DEV:
+      // 新規デバイスのアドレスをログ出力
+      // アドレスは1-127の範囲の値で、USBホストによってデバイスに割り当てられる識別子
       ESP_LOGI("EspUsbHost", "USB_HOST_CLIENT_EVENT_NEW_DEV new_dev.address=%d", eventMsg->new_dev.address);
+      
+      // USBデバイスをオープンする
+      // デバイスを操作するためのハンドルを取得
       err = usb_host_device_open(usbHost->clientHandle, eventMsg->new_dev.address, &usbHost->deviceHandle);
       if (err != ESP_OK) {
         ESP_LOGI("EspUsbHost", "usb_host_device_open() err=%x", err);
       } else {
         ESP_LOGI("EspUsbHost", "usb_host_device_open() ESP_OK");
-      }      usb_device_info_t dev_info;
+      }
+        // デバイス情報を取得
+      usb_device_info_t dev_info;
       err = usb_host_device_info(usbHost->deviceHandle, &dev_info);
       if (err != ESP_OK) {
         ESP_LOGI("EspUsbHost", "usb_host_device_info() err=%x", err);
       } else {
+        // 取得したデバイス情報をログに出力
         ESP_LOGI("EspUsbHost", "usb_host_device_info() ESP_OK\n"
-                               "# speed                 = %d\n"
-                               "# dev_addr              = %d\n"
-                               "# vMaxPacketSize0       = %d\n"
-                               "# bConfigurationValue   = %d\n"
-                               "# str_desc_manufacturer = \"%s\"\n"
-                               "# str_desc_product      = \"%s\"\n"
-                               "# str_desc_serial_num   = \"%s\"",
+                               "# speed                 = %d\n"  // デバイス速度（1=低速、2=全速、3=高速）
+                               "# dev_addr              = %d\n"  // デバイスアドレス
+                               "# vMaxPacketSize0       = %d\n"  // コントロールエンドポイントの最大パケットサイズ
+                               "# bConfigurationValue   = %d\n"  // 現在のコンフィギュレーション値
+                               "# str_desc_manufacturer = \"%s\"\n"  // 製造元名
+                               "# str_desc_product      = \"%s\"\n"  // 製品名
+                               "# str_desc_serial_num   = \"%s\"",   // シリアル番号
                  dev_info.speed,
                  dev_info.dev_addr,
                  dev_info.bMaxPacketSize0,
@@ -92,35 +126,39 @@ void EspUsbHost::_clientEventCallback(const usb_host_client_event_msg_t *eventMs
                  getUsbDescString(dev_info.str_desc_product).c_str(),
                  getUsbDescString(dev_info.str_desc_serial_num).c_str());
 
-        // デバイス情報を子クラスに通知
+        // デバイス情報を子クラスに通知（派生クラスで実装するコールバック）
         usbHost->onNewDevice(dev_info);
-      }
-
+      }      // デバイスディスクリプタ（基本情報）を取得
+      // デバイスディスクリプタにはベンダーID、製品ID、USBバージョンなどの基本情報が含まれる
       const usb_device_desc_t *dev_desc;
       err = usb_host_get_device_descriptor(usbHost->deviceHandle, &dev_desc);
       if (err != ESP_OK) {
         ESP_LOGI("EspUsbHost", "usb_host_get_device_descriptor() err=%x", err);
       } else {
+        // デバイスディスクリプタリクエストのセットアップパケット
+        // 0x80: デバイスからホストへの転送（IN）
+        // 0x06: GET_DESCRIPTOR リクエスト
+        // 0x01: DEVICE ディスクリプタ
+        // 0x12, 0x00: 要求サイズ (18バイト)
         const uint8_t setup[8] = { 0x80, 0x06, 0x00, 0x01, 0x00, 0x00, 0x12, 0x00 };
+        // PCAP形式でリクエストとレスポンスを記録（デバッグ・解析用）
         _printPcapText("GET DESCRIPTOR Request DEVICE", 0x000b, 0x00, 0x80, 0x02, sizeof(setup), 0x00, setup);
-        _printPcapText("GET DESCRIPTOR Response DEVICE", 0x0008, 0x01, 0x80, 0x02, sizeof(usb_device_desc_t), 0x03, (const uint8_t *)dev_desc);
-
-        ESP_LOGI("EspUsbHost", "usb_host_get_device_descriptor() ESP_OK\n"
+        _printPcapText("GET DESCRIPTOR Response DEVICE", 0x0008, 0x01, 0x80, 0x02, sizeof(usb_device_desc_t), 0x03, (const uint8_t *)dev_desc);        ESP_LOGI("EspUsbHost", "usb_host_get_device_descriptor() ESP_OK\n"
                                "#### DESCRIPTOR DEVICE ####\n"
-                               "# bLength            = %d\n"
-                               "# bDescriptorType    = %d\n"
-                               "# bcdUSB             = 0x%x\n"
-                               "# bDeviceClass       = 0x%x\n"
-                               "# bDeviceSubClass    = 0x%x\n"
-                               "# bDeviceProtocol    = 0x%x\n"
-                               "# bMaxPacketSize0    = %d\n"
-                               "# idVendor           = 0x%x\n"
-                               "# idProduct          = 0x%x\n"
-                               "# bcdDevice          = 0x%x\n"
-                               "# iManufacturer      = %d\n"
-                               "# iProduct           = %d\n"
-                               "# iSerialNumber      = %d\n"
-                               "# bNumConfigurations = %d",
+                               "# bLength            = %d\n"  // ディスクリプタの長さ（通常18バイト）
+                               "# bDescriptorType    = %d\n"  // ディスクリプタタイプ（1=デバイス）
+                               "# bcdUSB             = 0x%x\n"  // 対応するUSB仕様のバージョン（0x0200=USB2.0）
+                               "# bDeviceClass       = 0x%x\n"  // デバイスクラスコード
+                               "# bDeviceSubClass    = 0x%x\n"  // デバイスサブクラスコード
+                               "# bDeviceProtocol    = 0x%x\n"  // デバイスプロトコルコード
+                               "# bMaxPacketSize0    = %d\n"  // エンドポイント0の最大パケットサイズ
+                               "# idVendor           = 0x%x\n"  // ベンダーID
+                               "# idProduct          = 0x%x\n"  // 製品ID
+                               "# bcdDevice          = 0x%x\n"  // デバイスのリリースナンバー
+                               "# iManufacturer      = %d\n"  // 製造元文字列のインデックス
+                               "# iProduct           = %d\n"  // 製品名文字列のインデックス
+                               "# iSerialNumber      = %d\n"  // シリアル番号文字列のインデックス
+                               "# bNumConfigurations = %d",   // 使用可能な設定数
                  dev_desc->bLength,
                  dev_desc->bDescriptorType,
                  dev_desc->bcdUSB,
@@ -135,14 +173,20 @@ void EspUsbHost::_clientEventCallback(const usb_host_client_event_msg_t *eventMs
                  dev_desc->iProduct,
                  dev_desc->iSerialNumber,
                  dev_desc->bNumConfigurations);
-      }
-
+      }      // アクティブなコンフィグレーションディスクリプタ（設定情報）を取得
+      // コンフィグレーションディスクリプタにはデバイスの電源要件やインターフェース数などの情報が含まれる
       const usb_config_desc_t *config_desc;
       err = usb_host_get_active_config_descriptor(usbHost->deviceHandle, &config_desc);
       if (err != ESP_OK) {
         ESP_LOGI("EspUsbHost", "usb_host_get_active_config_descriptor() err=%x", err);
       } else {
+        // コンフィグレーションディスクリプタリクエストのセットアップパケット
+        // 0x80: デバイスからホストへの転送（IN）
+        // 0x06: GET_DESCRIPTOR リクエスト
+        // 0x02: CONFIGURATION ディスクリプタ
+        // 0x09, 0x00: 要求サイズ (9バイト、コンフィグディスクリプタのヘッダ部分)
         const uint8_t setup[8] = { 0x80, 0x06, 0x00, 0x02, 0x00, 0x00, 0x09, 0x00 };
+        // PCAP形式でリクエストとレスポンスを記録（デバッグ・解析用）
         _printPcapText("GET DESCRIPTOR Request CONFIGURATION", 0x000b, 0x00, 0x80, 0x02, sizeof(setup), 0x00, setup);
         _printPcapText("GET DESCRIPTOR Response CONFIGURATION", 0x0008, 0x01, 0x80, 0x02, sizeof(usb_config_desc_t), 0x03, (const uint8_t *)config_desc);
 
@@ -163,19 +207,25 @@ void EspUsbHost::_clientEventCallback(const usb_host_client_event_msg_t *eventMs
                  config_desc->iConfiguration,
                  config_desc->bmAttributes,
                  config_desc->bMaxPower * 2);
-      }
-
+      }      // コンフィグレーションディスクリプタを処理するためのコールバックを呼び出す
+      // このコールバックで各種ディスクリプタ（インターフェース、エンドポイントなど）を解析
       usbHost->_configCallback(config_desc);
       break;
-
+      
+    // USBデバイスが切断された場合
     case USB_HOST_CLIENT_EVENT_DEV_GONE:
       {
         ESP_LOGI("EspUsbHost", "USB_HOST_CLIENT_EVENT_DEV_GONE dev_gone.dev_hdl=%x", eventMsg->dev_gone.dev_hdl);
+        
+        // 登録済みの全転送を解放する処理
+        // 接続解除時には全てのリソースを適切に解放する必要がある
         for (int i = 0; i < usbHost->usbTransferSize; i++) {
+          // NULLポインタは処理をスキップ
           if (usbHost->usbTransfer[i] == NULL) {
             continue;
           }
 
+          // エンドポイントのクリア（転送を中止して状態をリセット）
           err = usb_host_endpoint_clear(eventMsg->dev_gone.dev_hdl, usbHost->usbTransfer[i]->bEndpointAddress);
           if (err != ESP_OK) {
             ESP_LOGI("EspUsbHost", "usb_host_endpoint_clear() err=%x, dev_hdl=%x, bEndpointAddress=%x", err, eventMsg->dev_gone.dev_hdl, usbHost->usbTransfer[i]->bEndpointAddress);
@@ -192,9 +242,9 @@ void EspUsbHost::_clientEventCallback(const usb_host_client_event_msg_t *eventMs
 
           usbHost->usbTransfer[i] = NULL;
         }
-        usbHost->usbTransferSize = 0;
-
+        usbHost->usbTransferSize = 0;        // 確保していたインターフェースをすべて解放する処理
         for (int i = 0; i < usbHost->usbInterfaceSize; i++) {
+          // インターフェースの解放（claim_interfaceの反対操作）
           err = usb_host_interface_release(usbHost->clientHandle, usbHost->deviceHandle, usbHost->usbInterface[i]);
           if (err != ESP_OK) {
             ESP_LOGI("EspUsbHost", "usb_host_interface_release() err=%x, err, clientHandle=%x, deviceHandle=%x, Interface=%x", err, usbHost->clientHandle, usbHost->deviceHandle, usbHost->usbInterface[i]);
@@ -204,50 +254,65 @@ void EspUsbHost::_clientEventCallback(const usb_host_client_event_msg_t *eventMs
 
           usbHost->usbInterface[i] = 0;
         }
-        usbHost->usbInterfaceSize = 0;
-
+        usbHost->usbInterfaceSize = 0;        // デバイスを閉じる
         usb_host_device_close(usbHost->clientHandle, usbHost->deviceHandle);
 
+        // デバイスが切断されたことを子クラスに通知
         usbHost->onGone(eventMsg);
       }
-      break;
-
+      break;    // その他のイベント
     default:
       ESP_LOGI("EspUsbHost", "clientEventCallback() default %d", eventMsg->event);
       break;
   }
 }
 
+/**
+ * USB構成ディスクリプタのコールバック関数
+ * 構成ディスクリプタを解析し、含まれる各ディスクリプタを処理する
+ * 
+ * @param config_desc 構成ディスクリプタへのポインタ
+ */
 void EspUsbHost::_configCallback(const usb_config_desc_t *config_desc) {
+  // 構成ディスクリプタの最初の値へのポインタを取得
   const uint8_t *p = &config_desc->val[0];
   uint8_t bLength;
 
+  // PCAPフォーマットでディスクリプタリクエストとレスポンスを記録
   const uint8_t setup[8] = { 0x80, 0x06, 0x00, 0x02, 0x00, 0x00, (uint8_t)config_desc->wTotalLength, 0x00 };
   _printPcapText("GET DESCRIPTOR Request CONFIGURATION", 0x000b, 0x00, 0x80, 0x02, sizeof(setup), 0x00, setup);
   _printPcapText("GET DESCRIPTOR Response CONFIGURATION", 0x0008, 0x01, 0x80, 0x02, config_desc->wTotalLength, 0x03, (const uint8_t *)config_desc);
 
+  // 構成ディスクリプタ内のすべてのディスクリプタを順番に処理
   for (int i = 0; i < config_desc->wTotalLength; i += bLength, p += bLength) {
-    bLength = *p;
+    bLength = *p; // 現在のディスクリプタの長さを取得
     if ((i + bLength) <= config_desc->wTotalLength) {
-      const uint8_t bDescriptorType = *(p + 1);
-      this->onConfig(bDescriptorType, p);
+      const uint8_t bDescriptorType = *(p + 1); // ディスクリプタの種類を取得
+      this->onConfig(bDescriptorType, p);       // 各ディスクリプタタイプに応じた処理を実行
     } else {
-      return;
+      return; // 長さが範囲外の場合は処理を終了
     }
   }
 }
 
+/**
+ * USBホストのタスク処理関数
+ * 定期的に呼び出され、USBイベントの処理と転送のチェックを行う
+ */
 void EspUsbHost::task(void) {
+  // USBホストライブラリのイベント処理（タイムアウト=1ms）
   esp_err_t err = usb_host_lib_handle_events(1, &this->eventFlags);
   if (err != ESP_OK && err != ESP_ERR_TIMEOUT) {
     ESP_LOGI("EspUsbHost", "usb_host_lib_handle_events() err=%x eventFlags=%x", err, this->eventFlags);
   }
 
+  // USBホストクライアントのイベント処理（タイムアウト=1ms）
   err = usb_host_client_handle_events(this->clientHandle, 1);
   if (err != ESP_OK && err != ESP_ERR_TIMEOUT) {
     ESP_LOGI("EspUsbHost", "usb_host_client_handle_events() err=%x", err);
   }
 
+  // デバイスが準備完了状態の場合、定期的に転送をチェック
   if (this->isReady) {
     unsigned long now = millis();
     if ((now - this->lastCheck) > this->interval) {
@@ -267,13 +332,24 @@ void EspUsbHost::task(void) {
   }
 }
 
+/**
+ * USBディスクリプタ文字列を読み取る関数
+ * USB文字列ディスクリプタからASCII文字列に変換する
+ * 
+ * @param str_desc 文字列ディスクリプタへのポインタ
+ * @return 変換されたASCII文字列
+ */
 String EspUsbHost::getUsbDescString(const usb_str_desc_t *str_desc) {
   String str = "";
+  // NULLポインタのチェック
   if (str_desc == NULL) {
     return str;
   }
 
+  // USB文字列ディスクリプタはUTF-16フォーマット（2バイト/文字）
+  // bLength/2で文字数を取得し、各文字をASCIIとして扱う
   for (int i = 0; i < str_desc->bLength / 2; i++) {
+    // ASCII範囲外の文字はスキップ
     if (str_desc->wData[i] > 0xFF) {
       continue;
     }
@@ -332,21 +408,21 @@ void EspUsbHost::onConfig(const uint8_t bDescriptorType, const uint8_t *p) {
                  data_str);
 #endif
       }
-      break;
-
-    case USB_INTERFACE_DESC:
+      break;    case USB_INTERFACE_DESC:
       {
+        // インターフェースディスクリプタの処理
+        // これはデバイスが提供する機能（HID、オーディオ、ストレージなど）を定義
         const usb_intf_desc_t *intf = (const usb_intf_desc_t *)p;
         ESP_LOGI("EspUsbHost", "USB_INTERFACE_DESC(0x04)\n"
                                "# bLength            = %d\n"
                                "# bDescriptorType    = %d\n"
-                               "# bInterfaceNumber   = %d\n"
-                               "# bAlternateSetting  = %d\n"
-                               "# bNumEndpoints      = %d\n"
-                               "# bInterfaceClass    = 0x%x\n"
-                               "# bInterfaceSubClass = 0x%x\n"
-                               "# bInterfaceProtocol = 0x%x\n"
-                               "# iInterface         = %d",
+                               "# bInterfaceNumber   = %d\n"  // インターフェース識別子
+                               "# bAlternateSetting  = %d\n"  // 代替設定番号
+                               "# bNumEndpoints      = %d\n"  // 使用するエンドポイント数
+                               "# bInterfaceClass    = 0x%x\n"  // インターフェースクラス(HID=0x03など)
+                               "# bInterfaceSubClass = 0x%x\n"  // サブクラス
+                               "# bInterfaceProtocol = 0x%x\n"  // プロトコル(キーボード=0x01など)
+                               "# iInterface         = %d",     // インターフェース名の文字列インデックス
                  intf->bLength,
                  intf->bDescriptorType,
                  intf->bInterfaceNumber,
@@ -357,24 +433,26 @@ void EspUsbHost::onConfig(const uint8_t bDescriptorType, const uint8_t *p) {
                  intf->bInterfaceProtocol,
                  intf->iInterface);
 
+        // インターフェースの確保（この後のエンドポイント操作に必要）
         this->claim_err = usb_host_interface_claim(this->clientHandle, this->deviceHandle, intf->bInterfaceNumber, intf->bAlternateSetting);
         if (this->claim_err != ESP_OK) {
           ESP_LOGI("EspUsbHost", "usb_host_interface_claim() err=%x", claim_err);
         } else {
           ESP_LOGI("EspUsbHost", "usb_host_interface_claim() ESP_OK");
+          // 確保したインターフェースを記録
           this->usbInterface[this->usbInterfaceSize] = intf->bInterfaceNumber;
           this->usbInterfaceSize++;
+          // インターフェース情報を保存（後でエンドポイント設定に使用）
           _bInterfaceNumber = intf->bInterfaceNumber;
           _bInterfaceClass = intf->bInterfaceClass;
           _bInterfaceSubClass = intf->bInterfaceSubClass;
           _bInterfaceProtocol = intf->bInterfaceProtocol;
         }
       }
-      break;
-
-    case USB_ENDPOINT_DESC:
+      break;    case USB_ENDPOINT_DESC:
       {
         const usb_ep_desc_t *ep_desc = (const usb_ep_desc_t *)p;
+        // エンドポイントディスクリプタの情報をログ出力
         ESP_LOGI("EspUsbHost", "USB_ENDPOINT_DESC(0x05)\n"
                                "# bLength          = %d\n"
                                "# bDescriptorType  = %d\n"
@@ -386,6 +464,7 @@ void EspUsbHost::onConfig(const uint8_t bDescriptorType, const uint8_t *p) {
                  ep_desc->bDescriptorType,
                  ep_desc->bEndpointAddress, USB_EP_DESC_GET_EP_NUM(ep_desc), USB_EP_DESC_GET_EP_DIR(ep_desc) ? "IN" : "OUT",
                  ep_desc->bmAttributes,
+                 // 転送タイプをマスクで取得し、対応する名称に変換
                  (ep_desc->bmAttributes & USB_BM_ATTRIBUTES_XFERTYPE_MASK) == USB_BM_ATTRIBUTES_XFER_CONTROL ? "CTRL" : (ep_desc->bmAttributes & USB_BM_ATTRIBUTES_XFERTYPE_MASK) == USB_BM_ATTRIBUTES_XFER_ISOC ? "ISOC"
                                                                                                                       : (ep_desc->bmAttributes & USB_BM_ATTRIBUTES_XFERTYPE_MASK) == USB_BM_ATTRIBUTES_XFER_BULK ? "BULK"
                                                                                                                       : (ep_desc->bmAttributes & USB_BM_ATTRIBUTES_XFERTYPE_MASK) == USB_BM_ATTRIBUTES_XFER_INT  ? "Interrupt"
@@ -393,23 +472,28 @@ void EspUsbHost::onConfig(const uint8_t bDescriptorType, const uint8_t *p) {
                  ep_desc->wMaxPacketSize,
                  ep_desc->bInterval);
 
+        // インターフェースの確保に失敗している場合は処理をスキップ
         if (this->claim_err != ESP_OK) {
           ESP_LOGI("EspUsbHost", "claim_err skip");
           return;
         }
 
+        // エンドポイントデータリストにインターフェース情報を保存
+        // 接続されたデバイスの各エンドポイントに関連するインターフェース情報を記録
         this->endpoint_data_list[USB_EP_DESC_GET_EP_NUM(ep_desc)].bInterfaceNumber = _bInterfaceNumber;
         this->endpoint_data_list[USB_EP_DESC_GET_EP_NUM(ep_desc)].bInterfaceClass = _bInterfaceClass;
         this->endpoint_data_list[USB_EP_DESC_GET_EP_NUM(ep_desc)].bInterfaceSubClass = _bInterfaceSubClass;
         this->endpoint_data_list[USB_EP_DESC_GET_EP_NUM(ep_desc)].bInterfaceProtocol = _bInterfaceProtocol;
-        this->endpoint_data_list[USB_EP_DESC_GET_EP_NUM(ep_desc)].bCountryCode = _bCountryCode;
-
+        this->endpoint_data_list[USB_EP_DESC_GET_EP_NUM(ep_desc)].bCountryCode = _bCountryCode;        // 割り込み転送タイプ(Interrupt)のみ処理、それ以外はスキップ
         if ((ep_desc->bmAttributes & USB_BM_ATTRIBUTES_XFERTYPE_MASK) != USB_BM_ATTRIBUTES_XFER_INT) {
           ESP_LOGI("EspUsbHost", "err ep_desc->bmAttributes=%x", ep_desc->bmAttributes);
           return;
         }
 
+        // INエンドポイント（デバイスからホストへのデータ転送）の場合
         if (ep_desc->bEndpointAddress & USB_B_ENDPOINT_ADDRESS_EP_DIR_MASK) {
+          // 転送バッファを割り当て
+          // 最大パケットサイズ+1バイトのバッファを確保
           esp_err_t err = usb_host_transfer_alloc(ep_desc->wMaxPacketSize + 1, 0, &this->usbTransfer[this->usbTransferSize]);
           if (err != ESP_OK) {
             this->usbTransfer[this->usbTransferSize] = NULL;
@@ -419,31 +503,32 @@ void EspUsbHost::onConfig(const uint8_t bDescriptorType, const uint8_t *p) {
             ESP_LOGI("EspUsbHost", "usb_host_transfer_alloc() ESP_OK data_buffer_size=%d", ep_desc->wMaxPacketSize + 1);
           }
 
-          this->usbTransfer[this->usbTransferSize]->device_handle = this->deviceHandle;
-          this->usbTransfer[this->usbTransferSize]->bEndpointAddress = ep_desc->bEndpointAddress;
-          this->usbTransfer[this->usbTransferSize]->callback = this->_onReceive;
-          this->usbTransfer[this->usbTransferSize]->context = this;
-          this->usbTransfer[this->usbTransferSize]->num_bytes = ep_desc->wMaxPacketSize;
-          interval = ep_desc->bInterval;
-          isReady = true;
-          this->usbTransferSize++;
+          // 転送構造体を設定
+          this->usbTransfer[this->usbTransferSize]->device_handle = this->deviceHandle;      // デバイスハンドル
+          this->usbTransfer[this->usbTransferSize]->bEndpointAddress = ep_desc->bEndpointAddress; // エンドポイントアドレス
+          this->usbTransfer[this->usbTransferSize]->callback = this->_onReceive;             // 転送完了コールバック
+          this->usbTransfer[this->usbTransferSize]->context = this;                          // コールバックコンテキスト
+          this->usbTransfer[this->usbTransferSize]->num_bytes = ep_desc->wMaxPacketSize;     // 転送バイト数
+          interval = ep_desc->bInterval;     // ポーリング間隔を設定
+          isReady = true;                   // デバイス準備完了フラグをセット
+          this->usbTransferSize++;          // 転送カウントを増やす
         }
       }
-      break;
-
-    case USB_INTERFACE_ASSOC_DESC:
+      break;    case USB_INTERFACE_ASSOC_DESC:
       {
 #if (ARDUHAL_LOG_LEVEL >= ARDUHAL_LOG_LEVEL_INFO)
+        // インターフェース関連付けディスクリプタの処理
+        // 複数のインターフェースをグループ化するために使用される（複合デバイスなど）
         const usb_iad_desc_t *iad_desc = (const usb_iad_desc_t *)p;
         ESP_LOGI("EspUsbHost", "USB_INTERFACE_ASSOC_DESC(0x0b)\n"
                                "# bLength           = %d\n"
                                "# bDescriptorType   = %d\n"
-                               "# bFirstInterface   = %d\n"
-                               "# bInterfaceCount   = %d\n"
-                               "# bFunctionClass    = 0x%x\n"
-                               "# bFunctionSubClass = 0x%x\n"
-                               "# bFunctionProtocol = 0x%x\n"
-                               "# iFunction         = %d",
+                               "# bFirstInterface   = %d\n"  // グループの最初のインターフェース番号
+                               "# bInterfaceCount   = %d\n"  // グループに含まれるインターフェース数
+                               "# bFunctionClass    = 0x%x\n"  // グループ全体のクラスコード
+                               "# bFunctionSubClass = 0x%x\n"  // グループ全体のサブクラス
+                               "# bFunctionProtocol = 0x%x\n"  // グループ全体のプロトコル
+                               "# iFunction         = %d",     // グループの説明文字列インデックス
                  iad_desc->bLength,
                  iad_desc->bDescriptorType,
                  iad_desc->bFirstInterface,
@@ -454,19 +539,18 @@ void EspUsbHost::onConfig(const uint8_t bDescriptorType, const uint8_t *p) {
                  iad_desc->iFunction);
 #endif
       }
-      break;
-
-    case USB_HID_DESC:
+      break;    case USB_HID_DESC:
       {
+        // HID（ヒューマンインターフェースデバイス）ディスクリプタの処理
         const tusb_hid_descriptor_hid_t *hid_desc = (const tusb_hid_descriptor_hid_t *)p;
         ESP_LOGI("EspUsbHost", "USB_HID_DESC(0x21)\n"
                                "# bLength         = %d\n"
                                "# bDescriptorType = 0x%x\n"
-                               "# bcdHID          = 0x%x\n"
-                               "# bCountryCode    = 0x%x\n"
-                               "# bNumDescriptors = %d\n"
-                               "# bReportType     = 0x%x\n"
-                               "# wReportLength   = %d",
+                               "# bcdHID          = 0x%x\n"  // HIDクラス仕様のバージョン
+                               "# bCountryCode    = 0x%x\n"  // 国別コード（キーボードレイアウト等）
+                               "# bNumDescriptors = %d\n"    // このディスクリプタ内の下位ディスクリプタ数
+                               "# bReportType     = 0x%x\n"  // レポートディスクリプタタイプ
+                               "# wReportLength   = %d",     // レポートディスクリプタ長
                  hid_desc->bLength,
                  hid_desc->bDescriptorType,
                  hid_desc->bcdHID,
@@ -474,20 +558,22 @@ void EspUsbHost::onConfig(const uint8_t bDescriptorType, const uint8_t *p) {
                  hid_desc->bNumDescriptors,
                  hid_desc->bReportType,
                  hid_desc->wReportLength);
-        _bCountryCode = hid_desc->bCountryCode;
+        _bCountryCode = hid_desc->bCountryCode;  // 国別コードを保存
 
+        // HIDレポートディスクリプタをリクエスト
+        // 0x81: デバイス宛（クラス固有）、0x00: インターフェース、0x22: レポートディスクリプタ
         submitControl(0x81, 0x00, 0x22, _bInterfaceNumber, hid_desc->wReportLength);
       }
-      break;
-
-    default:
+      break;    default:
       {
 #if (ARDUHAL_LOG_LEVEL >= ARDUHAL_LOG_LEVEL_INFO)
+        // 未知/未サポートのディスクリプタタイプの処理
+        // 内容を16進数でログに出力
         const usb_standard_desc_t *desc = (const usb_standard_desc_t *)p;
         String data_str = "";
         for (int i = 0; i < (desc->bLength - 2); i++) {
           if (desc->val[i] < 16) {
-            data_str += "0";
+            data_str += "0";  // 16未満の値は先頭に0を追加
           }
           data_str += String(desc->val[i], HEX) + " ";
         }
