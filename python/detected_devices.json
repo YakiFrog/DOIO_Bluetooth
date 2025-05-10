@@ -1,0 +1,24 @@
+[
+  {
+    "index": 1,
+    "vendor_id": 0,
+    "product_id": 0,
+    "manufacturer": "Apple",
+    "product": "",
+    "interface": -1,
+    "path": "4465765372767349443a34323934393639313130",
+    "usage_page": 65292,
+    "usage": 5
+  },
+  {
+    "index": 2,
+    "vendor_id": 53264,
+    "product_id": 5633,
+    "manufacturer": "DOIO",
+    "product": "DOIO",
+    "interface": 2,
+    "path": "4465765372767349443a34323935303739323930",
+    "usage_page": 1,
+    "usage": 2
+  }
+]

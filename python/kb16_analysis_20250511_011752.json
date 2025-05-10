@@ -1,0 +1,11 @@
+{
+  "timestamp": "20250511_011752",
+  "statistics": {
+    "total_reports": 0,
+    "unique_patterns": 0,
+    "top_patterns": [],
+    "byte_changes": {}
+  },
+  "matrix_analysis": {},
+  "bitmap_analysis": {}
+}
