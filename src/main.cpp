@@ -37,6 +37,11 @@ public:
   // キーの現在の状態を記録する変数
   bool keyState[256] = {false}; // すべてのキーコードに対応するための配列
   
+  // DOIOキーボード用のキー表示
+  int lastPressedKeyRow = -1;
+  int lastPressedKeyCol = -1;
+  bool showDOIOKeyPosition = false; // DOIOキーボードのキー位置表示モード
+  
   // EspUsbHostのコールバックをオーバーライドして、デバイス情報を取得
   void onNewDevice(const usb_device_info_t &dev_info) {
     deviceManufacturer = getUsbDescString(dev_info.str_desc_manufacturer);
@@ -44,6 +49,14 @@ public:
     deviceSerialNum = getUsbDescString(dev_info.str_desc_serial_num);
     deviceConnected = true;
     needsUpdate = true; // 画面更新のフラグを立てる
+    
+    // デバイスIDの取得（DOIOキーボード検出用）
+    if (device_vendor_id == 0xD010 && device_product_id == 0x1601) {
+      showDOIOKeyPosition = true; // DOIOキーボードモードをオン
+      Serial.println("DOIO KB16キーボードを検出しました！");
+    } else {
+      showDOIOKeyPosition = false; // 通常モード
+    }
     
     Serial.println("新しいキーボード接続:");
     Serial.print("製造元: "); 
@@ -80,6 +93,9 @@ public:
     deviceManufacturer = "";
     deviceProduct = "";
     deviceSerialNum = "";
+    showDOIOKeyPosition = false; // DOIOモードをリセット
+    lastPressedKeyRow = -1;
+    lastPressedKeyCol = -1;
     needsUpdate = true;
     
     Serial.println("キーボードが取り外されました");
@@ -146,6 +162,38 @@ public:
   // 元のonKeyboardKeyメソッドは無効化（使わない）
   void onKeyboardKey(uint8_t ascii, uint8_t keycode, uint8_t modifier) override {
     // 使用せず、onKeyboardで処理
+  }
+  
+  // DOIO KB16キー状態変更通知のオーバーライド
+  void onKB16KeyStateChanged(uint8_t row, uint8_t col, bool pressed) override {
+    if (pressed) {
+      // キーが押されたとき、その位置を記録
+      lastPressedKeyRow = row;
+      lastPressedKeyCol = col;
+      
+      // キー番号を計算 (0~15)
+      int keyNumber = row * 4 + col;
+      
+      // テキストバッファに追加
+      char keyText[10];
+      sprintf(keyText, "Key: %d", keyNumber);
+      
+      // バッファをクリアして新しい情報を表示
+      bufferPos = 0;
+      
+      // キー位置をテキストバッファに設定
+      int len = strlen(keyText);
+      for (int i = 0; i < len && i < BUFFER_SIZE - 1; i++) {
+        textBuffer[bufferPos++] = keyText[i];
+      }
+      textBuffer[bufferPos] = '\0';
+      
+      // DOIOキーボードモードをオン
+      showDOIOKeyPosition = true;
+      needsUpdate = true;
+      
+      Serial.printf("DOIO キーボード: キー %d (%d,%d) 押下\n", keyNumber, row, col);
+    }
   }
   
   // 長押し状態を更新する関数（loop内で呼び出し）
@@ -268,34 +316,74 @@ public:
       tft.println("Waiting for keyboard...");
     }
     
-    // 入力されたテキスト表示のヘッダー
-    tft.setCursor(0, 45);
-    tft.println("Input:");
-    
-    // 入力されたテキストを表示（1行に修正）
-    tft.setCursor(0, 55);  // 表示位置の調整
-    tft.setTextColor(ST77XX_GREEN);
-    tft.setTextSize(2);  // テキストサイズを大きく
-    
-    // 文字列が長い場合は最後の部分だけ表示
-    const int MAX_DISPLAY_CHARS = 8;  // 1行表示で画面に収まる文字数
-    char displayBuffer[MAX_DISPLAY_CHARS + 1]; // +1 はNULL終端用
-    
-    // 表示するテキストを決定
-    if (bufferPos <= MAX_DISPLAY_CHARS) {
-      // バッファ全体が表示できる場合
-      strcpy(displayBuffer, textBuffer);
+    // DOIO KB16キーボードの場合は特別表示
+    if (deviceConnected && (device_vendor_id == 0xD010 && device_product_id == 0x1601) && showDOIOKeyPosition) {
+      // DOIOキーボード用の表示
+      tft.setCursor(0, 45);
+      tft.setTextColor(ST77XX_GREEN);
+      tft.println("DOIO KB16 Layout:");
+
+      // 4x4マトリックスを表示
+      for (int row = 0; row < 4; row++) {
+        tft.setCursor(10, 60 + row * 15);
+        for (int col = 0; col < 4; col++) {
+          int keyNum = row * 4 + col;
+          
+          // 最後に押されたキーは別の色で表示
+          if (row == lastPressedKeyRow && col == lastPressedKeyCol) {
+            tft.setTextColor(ST77XX_RED);
+            tft.print(keyNum);
+            tft.setTextColor(ST77XX_GREEN);
+          } else {
+            tft.print(keyNum);
+          }
+          
+          // 間隔をあける
+          if (col < 3) tft.print(" ");
+        }
+      }
+      
+      // 現在選択されているキー番号の大きな表示
+      if (lastPressedKeyRow >= 0 && lastPressedKeyCol >= 0) {
+        int keyNumber = lastPressedKeyRow * 4 + lastPressedKeyCol;
+        tft.setCursor(20, tft.height() - 60);
+        tft.setTextColor(ST77XX_YELLOW);
+        tft.setTextSize(3);
+        tft.print("Key:");
+        tft.print(keyNumber);
+      }
     } else {
-      // 長い場合は最後の部分だけ表示
-      strcpy(displayBuffer, &textBuffer[bufferPos - MAX_DISPLAY_CHARS]);
-    }
-    
-    // テキストを1行で表示
-    tft.print(displayBuffer);
-    
-    // カーソルを表示
-    if ((millis() / 500) % 2 == 0) {  // 500ms間隔で点滅
-      tft.print("_");
+      // 通常のキーボード表示
+      
+      // 入力されたテキスト表示のヘッダー
+      tft.setCursor(0, 45);
+      tft.println("Input:");
+      
+      // 入力されたテキストを表示（1行に修正）
+      tft.setCursor(0, 55);  // 表示位置の調整
+      tft.setTextColor(ST77XX_GREEN);
+      tft.setTextSize(2);  // テキストサイズを大きく
+      
+      // 文字列が長い場合は最後の部分だけ表示
+      const int MAX_DISPLAY_CHARS = 8;  // 1行表示で画面に収まる文字数
+      char displayBuffer[MAX_DISPLAY_CHARS + 1]; // +1 はNULL終端用
+      
+      // 表示するテキストを決定
+      if (bufferPos <= MAX_DISPLAY_CHARS) {
+        // バッファ全体が表示できる場合
+        strcpy(displayBuffer, textBuffer);
+      } else {
+        // 長い場合は最後の部分だけ表示
+        strcpy(displayBuffer, &textBuffer[bufferPos - MAX_DISPLAY_CHARS]);
+      }
+      
+      // テキストを1行で表示
+      tft.print(displayBuffer);
+      
+      // カーソルを表示
+      if ((millis() / 500) % 2 == 0) {  // 500ms間隔で点滅
+        tft.print("_");
+      }
     }
     
     // 入力統計を表示
