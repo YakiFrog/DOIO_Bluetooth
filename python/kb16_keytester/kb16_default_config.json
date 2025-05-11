@@ -1,0 +1,26 @@
+{
+    "key_layout": [
+        ["a", "b", "c", "d"],
+        ["e", "f", "g", "h"],
+        ["i", "j", "k", "l"],
+        ["m", "n", "o", "p"]
+    ],
+    "key_mapping": {
+        "a": "Qt.Key_A",
+        "b": "Qt.Key_B",
+        "c": "Qt.Key_C",
+        "d": "Qt.Key_D",
+        "e": "Qt.Key_E",
+        "f": "Qt.Key_F",
+        "g": "Qt.Key_G",
+        "h": "Qt.Key_H",
+        "i": "Qt.Key_I",
+        "j": "Qt.Key_J",
+        "k": "Qt.Key_K",
+        "l": "Qt.Key_L",
+        "m": "Qt.Key_M",
+        "n": "Qt.Key_N",
+        "o": "Qt.Key_O",
+        "p": "Qt.Key_P"
+    }
+}
