@@ -36,7 +36,7 @@ class KeyboardManager:
     """DOIO KB16 キーボード管理クラス"""
     
     def __init__(self, vendor_id=DEFAULT_VENDOR_ID, product_id=DEFAULT_PRODUCT_ID, 
-                 callback=None, auto_connect=False):
+                 callback=None, auto_connect=False, debug=False):
         """
         初期化
         
@@ -50,6 +50,8 @@ class KeyboardManager:
             HIDレポート受信時のコールバック関数
         auto_connect : bool
             初期化時に自動的にキーボードに接続するかどうか
+        debug : bool
+            デバッグ情報を表示するかどうか
         """
         self.vendor_id = vendor_id
         self.product_id = product_id
@@ -60,7 +62,7 @@ class KeyboardManager:
         self.key_states = {}
         self.encoder_states = {}
         self.encoder_button_states = {}
-        self.debug = False
+        self.debug = debug
         self.last_report_time = None
         self.report_counter = 0
         
@@ -221,44 +223,163 @@ class KeyboardManager:
             updated_encoders = {}
             updated_encoder_buttons = {}
             
-            # キーマトリックスの状態を処理
-            for key_id in range(1, 17):  # 16キー
-                key_byte = (key_id - 1) // 8
-                key_bit = (key_id - 1) % 8
+            # QMK Firmwareのinfo.jsonに基づくマッピング
+            # キーマトリックスマッピング（以下のレイアウトを想定）
+            # [0,0] [0,1] [0,2] [0,3]
+            # [1,0] [1,1] [1,2] [1,3]
+            # [2,0] [2,1] [2,2] [2,3]
+            # [3,0] [3,1] [3,2] [3,3]
+            
+            # キーのマトリクス位置は次のように割り当てられています
+            # a b c d
+            # e f g h
+            # i j k l
+            # m n o p
+            
+            # QMKのマトリクス位置に基づいて、解析結果の頻度の高いビットを手動でマッピング
+            key_mapping = [
+                # QMKマトリクス位置, キーID
+                (0, 0, 1),   # 左上
+                (0, 1, 2),
+                (0, 2, 3),
+                (0, 3, 4),   # 右上
                 
-                if key_byte < len(report):
-                    key_state = bool(report[key_byte] & (1 << key_bit))
+                (1, 0, 5),   # 2段目左
+                (1, 1, 6),
+                (1, 2, 7),
+                (1, 3, 8),   # 2段目右
+                
+                (2, 0, 9),   # 3段目左
+                (2, 1, 10),
+                (2, 2, 11),
+                (2, 3, 12),  # 3段目右
+                
+                (3, 0, 13),  # 左下
+                (3, 1, 14),
+                (3, 2, 15),
+                (3, 3, 16),  # 右下
+            ]
+            
+            # キーマトリックスを確認
+            if len(report) >= 6:  # レポートの長さを確認（少なくとも6バイト必要）
+                # キーマトリクス位置からHIDレポートのバイト/ビットを手動マッピング
+                # キーは a,b,c,d,e,f,g,h,i,j,k,l,m,n,o,p という順番で割り振られている
+                matrix_to_bytes = {
+                    # 最上段の修正 - QMKマトリクスの[0,0]～[0,3] (a,b,c,d)
+                    (0, 0): (3, 0),  # マトリクス[0,0] -> byte3_bit0に変更 (キーa)
+                    (0, 1): (3, 1),  # マトリクス[0,1] -> byte3_bit1に変更 (キーb)
+                    (0, 2): (3, 2),  # マトリクス[0,2] -> byte3_bit2に変更 (キーc)
+                    (0, 3): (3, 3),  # マトリクス[0,3] -> byte3_bit3に変更 (キーd)
                     
-                    # 状態が変わった場合のみ更新
-                    if self.key_states.get(key_id) != key_state:
-                        self.key_states[key_id] = key_state
-                        updated_keys[key_id] = key_state
+                    # 2段目の修正 - QMKマトリクスの[1,0]～[1,3]
+                    (1, 0): (3, 4),  # マトリクス[1,0] -> byte3_bit4に変更
+                    (1, 1): (3, 5),  # マトリクス[1,1] -> byte3_bit5に変更
+                    (1, 2): (3, 6),  # マトリクス[1,2] -> byte3_bit6に変更
+                    (1, 3): (3, 7),  # マトリクス[1,3] -> byte3_bit7に変更
+                    
+                    (2, 0): (4, 1),  # マトリクス[2,0] -> byte4_bit1
+                    (2, 1): (4, 5),  # マトリクス[2,1] -> byte4_bit5
+                    (2, 2): (5, 3),  # マトリクス[2,2] -> byte5_bit3
+                    (2, 3): (4, 6),  # マトリクス[2,3] -> byte4_bit6
+                    
+                    # 最下段の修正 - QMKマトリクスの[3,0]～[3,3] (m,n,o,p)
+                    (3, 0): (0, 4),  # マトリクス[3,0] -> byte0_bit4に変更 (キーm)
+                    (3, 1): (0, 5),  # マトリクス[3,1] -> byte0_bit5に変更 (キーn)
+                    (3, 2): (0, 6),  # マトリクス[3,2] -> byte0_bit6に変更 (キーo)
+                    (3, 3): (0, 7),  # マトリクス[3,3] -> byte0_bit7に変更 (キーp)
+                }
+                
+                # マトリクス位置を使って状態を更新
+                # デバッグ情報のために生のレポートデータを出力
+                if self.debug and len(report) >= 10:
+                    debug_report = " ".join([f"{b:02x}" for b in report[:12]])
+                    bit_info = []
+                    # 重要なバイトのビット表示
+                    # バイト0が4行目(mnop)の状態を持っている可能性がある
+                    if len(report) >= 1:
+                        bits0 = format(report[0], '08b')
+                        bit_info.append(f"byte0(mnop)={bits0}")
+                    # バイト2の情報も参考として表示
+                    if len(report) >= 3:
+                        bits2 = format(report[2], '08b')
+                        bit_info.append(f"byte2={bits2}")
+                    # バイト3が1行目と2行目の状態を持っている
+                    if len(report) >= 4:
+                        bits3 = format(report[3], '08b')
+                        bit_info.append(f"byte3(abcd/efgh)={bits3}")
+                    # バイト4/5が3行目の状態の一部を持っている
+                    if len(report) >= 6:
+                        bits4 = format(report[4], '08b')
+                        bits5 = format(report[5], '08b')
+                        bit_info.append(f"byte4/5(ijkl)={bits4}/{bits5}")
+                    
+                    if self.report_counter % 20 == 0:  # 20回に1回のみ表示（少し間引く）
+                        print(f"Raw report: {debug_report}")
+                        print(f"Bit info: {' | '.join(bit_info)}")
+                
+                for matrix_pos, key_id in [(pos[:2], pos[2]) for pos in key_mapping]:
+                    if matrix_pos in matrix_to_bytes:
+                        byte_idx, bit_pos = matrix_to_bytes[matrix_pos]
+                        if byte_idx < len(report):
+                            key_state = bool(report[byte_idx] & (1 << bit_pos))
+                            
+                            # キー状態の更新（変更がある場合のみ）
+                            if self.key_states.get(key_id) != key_state:
+                                # デバッグ情報（キー状態が変化したときのみ）
+                                if self.debug:
+                                    print(f"Key {key_id} (マトリクス[{matrix_pos[0]},{matrix_pos[1]}]): byte{byte_idx}_bit{bit_pos}={key_state}")
+                                
+                                # 状態を更新
+                                self.key_states[key_id] = key_state
+                                updated_keys[key_id] = key_state
             
             # エンコーダー（ノブ）の状態を処理
-            if len(report) >= 10:
-                # エンコーダー1
-                if report[8] != self.encoder_states.get(1):
-                    self.encoder_states[1] = report[8]
-                    updated_encoders[1] = min(100, self.encoder_states[1] * 100 // 255)
+            # QMKファームウェアから、3つのエンコーダーが存在することを確認
+            if len(report) >= 12:
+                # QMK info.jsonを参考に、ノブの配置は次の通り:
+                # Encoder 1 (0, 4): Play
+                # Encoder 2 (1, 4): TO1
+                # Encoder 3 (2, 4): Mute
                 
-                # エンコーダー2
-                if len(report) >= 11 and report[9] != self.encoder_states.get(2):
-                    self.encoder_states[2] = report[9]
-                    updated_encoders[2] = min(100, self.encoder_states[2] * 100 // 255)
+                # エンコーダーの値変化を修正
+                encoder_value_mapping = {
+                    1: 7,   # エンコーダー1の値はreport[7]に変更
+                    2: 8,   # エンコーダー2の値はreport[8]に変更
+                    3: 9,   # エンコーダー3の値はreport[9]に変更
+                }
                 
-                # エンコーダー3
-                if len(report) >= 12 and report[10] != self.encoder_states.get(3):
-                    self.encoder_states[3] = report[10]
-                    updated_encoders[3] = min(100, self.encoder_states[3] * 100 // 255)
+                # ノブの回転状態を処理
+                for encoder_id, byte_idx in encoder_value_mapping.items():
+                    if byte_idx < len(report) and report[byte_idx] != self.encoder_states.get(encoder_id):
+                        old_value = self.encoder_states.get(encoder_id, 0)
+                        self.encoder_states[encoder_id] = report[byte_idx]
+                        # 0-255の値を0-100%にスケーリング
+                        updated_encoders[encoder_id] = min(100, self.encoder_states[encoder_id] * 100 // 255)
+                        
+                        # デバッグ情報（エンコーダー値が変化したときのみ）
+                        if self.debug:
+                            print(f"Encoder {encoder_id} rotation: {old_value} -> {report[byte_idx]} ({updated_encoders[encoder_id]}%)")
                 
-                # エンコーダーのプッシュ状態
-                if len(report) >= 13:
-                    for encoder_id in range(1, 4):
-                        encoder_bit = encoder_id - 1
-                        state = bool(report[11] & (1 << encoder_bit))
-                        if self.encoder_button_states.get(encoder_id) != state:
-                            self.encoder_button_states[encoder_id] = state
-                            updated_encoder_buttons[encoder_id] = state
+                # エンコーダーのボタン状態を処理
+                if len(report) >= 12:
+                    # ボタンのビットマッピングをさらに調整
+                    # QMKファイルからの情報に基づく
+                    encoder_button_mapping = [
+                        (1, 0, 1),  # ノブ1ボタン - byte1_bit0に変更
+                        (1, 1, 2),  # ノブ2ボタン - byte1_bit1に変更
+                        (1, 2, 3),  # ノブ3ボタン - byte1_bit2に変更
+                    ]
+                    
+                    for byte_idx, bit_pos, encoder_id in encoder_button_mapping:
+                        if byte_idx < len(report):
+                            state = bool(report[byte_idx] & (1 << bit_pos))
+                            if self.encoder_button_states.get(encoder_id) != state:
+                                # デバッグ情報（エンコーダーボタン状態が変化したときのみ）
+                                if self.debug:
+                                    print(f"Encoder {encoder_id} Button: byte{byte_idx}_bit{bit_pos}={state}")
+                                
+                                self.encoder_button_states[encoder_id] = state
+                                updated_encoder_buttons[encoder_id] = state
             
             # コールバック関数がある場合は呼び出す
             if self.callback:

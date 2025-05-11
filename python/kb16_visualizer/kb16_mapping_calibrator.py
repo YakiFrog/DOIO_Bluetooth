@@ -49,6 +49,7 @@ HIGHLIGHT_COLOR = "#57ADFF"
 # 設定ファイルの保存パス
 CONFIG_DIR = os.path.dirname(os.path.abspath(__file__))
 DEFAULT_CONFIG_PATH = os.path.join(CONFIG_DIR, "kb16_mapping.json")
+CUSTOM_CONFIG_PATH = os.path.join(CONFIG_DIR, "kb16_mapping_custom.json")
 
 
 class CalibrationButton(QPushButton):
@@ -286,6 +287,11 @@ class MappingCalibrationTool(QMainWindow):
         reset_action = QAction("デフォルト設定に戻す", self)
         reset_action.triggered.connect(self.reset_to_default_mapping)
         file_menu.addAction(reset_action)
+
+        # カスタム設定をロード
+        custom_action = QAction("カスタム設定をロード", self)
+        custom_action.triggered.connect(self.load_custom_mapping)
+        file_menu.addAction(custom_action)
         
         file_menu.addSeparator()
         
@@ -459,8 +465,38 @@ class MappingCalibrationTool(QMainWindow):
             self.load_mapping()
             self.statusBar().showMessage("デフォルトマッピングを適用しました")
     
+    def load_custom_mapping(self):
+        """カスタムマッピングをロード"""
+        reply = QMessageBox.question(
+            self, "カスタム設定の確認", 
+            "カスタムマッピング設定をロードしますか？",
+            QMessageBox.Yes | QMessageBox.No, QMessageBox.No
+        )
+        
+        if reply == QMessageBox.Yes:
+            self.load_mapping(CUSTOM_CONFIG_PATH)
+            self.statusBar().showMessage("カスタムマッピングを適用しました")
+    
     def keyboard_callback(self, report, updated_keys, updated_encoders, updated_encoder_buttons):
         """キーボードマネージャーからのコールバック"""
+        # デバッグ情報を表示
+        if updated_keys or updated_encoders or updated_encoder_buttons:
+            debug_info = f"レポート: {' '.join([f'{b:02x}' for b in report[:16]])}"
+            if updated_keys:
+                key_info = ", ".join([f"キー{k}={'押' if s else '離'}" for k, s in updated_keys.items()])
+                debug_info += f" | キー変化: {key_info}"
+            
+            if updated_encoders:
+                enc_info = ", ".join([f"ノブ{e}={v}%" for e, v in updated_encoders.items()])
+                debug_info += f" | ノブ回転: {enc_info}"
+            
+            if updated_encoder_buttons:
+                btn_info = ", ".join([f"ノブ{b}ボタン={'押' if s else '離'}" for b, s in updated_encoder_buttons.items()])
+                debug_info += f" | ノブボタン: {btn_info}"
+            
+            print(debug_info)
+            self.statusBar().showMessage(debug_info)
+        
         # キーの状態を更新
         for key_id, state in updated_keys.items():
             if state:  # キーが押されたとき
