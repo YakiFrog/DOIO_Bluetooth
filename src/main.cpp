@@ -5,6 +5,34 @@
 #include "DisplayController.h"
 #include "Peripherals.h"
 
+// DOIO KB16 キーマッピング構造体（KEYBOARD_BLEプロジェクトから移植）
+struct KeyMapping {
+    uint8_t byte_idx;  // レポート内のバイトインデックス
+    uint8_t bit_mask;  // ビットマスク (1 << bit)
+    uint8_t row;       // キーボードマトリックス行
+    uint8_t col;       // キーボードマトリックス列
+};
+
+// DOIO KB16キーマッピング（動作確認済みデータ）
+const KeyMapping kb16_key_map[] = {
+    { 5, 0x20, 0, 0 },  // byte5_bit5, 変化回数: 80
+    { 1, 0x01, 0, 1 },  // byte1_bit0, 変化回数: 78
+    { 1, 0x02, 0, 2 },  // byte1_bit1, 変化回数: 44
+    { 5, 0x01, 0, 3 },  // byte5_bit0, 変化回数: 38
+    { 4, 0x01, 1, 0 },  // byte4_bit0, 変化回数: 36
+    { 5, 0x02, 1, 1 },  // byte5_bit1, 変化回数: 33
+    { 4, 0x08, 1, 2 },  // byte4_bit3, 変化回数: 24
+    { 4, 0x80, 1, 3 },  // byte4_bit7, 変化回数: 24
+    { 4, 0x02, 2, 0 },  // byte4_bit1, 変化回数: 24
+    { 4, 0x20, 2, 1 },  // byte4_bit5, 変化回数: 24
+    { 5, 0x08, 2, 2 },  // byte5_bit3, 変化回数: 24
+    { 4, 0x40, 2, 3 },  // byte4_bit6, 変化回数: 22
+    { 4, 0x10, 3, 0 },  // byte4_bit4, 変化回数: 20
+    { 5, 0x10, 3, 1 },  // byte5_bit4, 変化回数: 20
+    { 4, 0x04, 3, 2 },  // byte4_bit2, 変化回数: 18
+    { 5, 0x04, 3, 3 },  // byte5_bit2, 変化回数: 18
+};
+
 // BLEキーボードの設定
 BleKeyboard bleKeyboard("DOIO Keyboard", "DOIO", 100);
 bool bleEnabled = true;  // BLE機能のオンオフ制御用
@@ -21,6 +49,92 @@ public:
   unsigned long lastKeyTimes[256] = {0}; // キーごとの最後の処理時間
   uint8_t lastProcessedKeycode = 0;
   
+  // DOIO KB16用のキーコード変換関数（オーバーライド）
+  uint8_t getKeycodeToAscii(uint8_t keycode, uint8_t shift) override {
+    if (isDoioKb16) {
+      // DOIO KB16のカスタムキーコードマッピング（Python版と同じ）
+      bool is_shift = (shift != 0);
+      
+      // アルファベット (0x08-0x21: A-Z)
+      if (keycode >= 0x08 && keycode <= 0x21) {
+        if (is_shift) {
+          return 'A' + (keycode - 0x08);
+        } else {
+          return 'a' + (keycode - 0x08);
+        }
+      }
+      // 数字 (0x22-0x2B: 1-0) - Python版と同じマッピング
+      else if (keycode >= 0x22 && keycode <= 0x2B) {
+        if (is_shift) {
+          const char shiftNumbers[] = "!@#$%^&*()";
+          return shiftNumbers[keycode - 0x22];
+        } else {
+          if (keycode == 0x2B) return '0'; // 0は最後
+          return '1' + (keycode - 0x22);
+        }
+      }
+      // DOIO KB16の特殊キー（Python版と同じマッピング）
+      else {
+        switch (keycode) {
+          case 0x2C: return ' '; // スペース
+          case 0x28: return '\n'; // エンター
+          case 0x2A: return '\b'; // バックスペース
+          case 0x2B: return '\t'; // タブ
+          case 0x2D: return is_shift ? '_' : '-';
+          case 0x2E: return is_shift ? '+' : '=';
+          case 0x2F: return is_shift ? '{' : '[';
+          case 0x30: return is_shift ? '}' : ']';
+          case 0x31: return is_shift ? '|' : '\\';
+          case 0x33: return is_shift ? ':' : ';';
+          case 0x34: return is_shift ? '"' : '\'';
+          case 0x35: return is_shift ? '~' : '`';
+          case 0x36: return is_shift ? '<' : ',';
+          case 0x37: return is_shift ? '>' : '.';
+          case 0x38: return is_shift ? '?' : '/';
+          default: return 0;
+        }
+      }
+    } else {
+      // 標準的なHIDキーコードの場合は親クラスの実装を呼び出す
+      return EspUsbHost::getKeycodeToAscii(keycode, shift);
+    }
+  }
+  
+  // デバイス接続時にDOIO KB16を検出
+  void onDeviceConnected() override {
+    // 親クラスの処理を呼び出す
+    EspUsbHost::onDeviceConnected();
+    
+    // デバイス情報をデバッグ出力
+    Serial.printf("Device connected: VID=0x%04X, PID=0x%04X\n", idVendor, idProduct);
+    Serial.printf("Manufacturer: %s\n", manufacturer.c_str());
+    Serial.printf("Product: %s\n", productName.c_str());
+    
+    // VID/PIDでDOIO KB16を識別
+    // 複数のVID/PIDパターンをチェック
+    bool isDOIO = false;
+    if ((idVendor == 0xD010 && idProduct == 0x1601) ||  // 標準DOIO KB16
+        (idVendor == 0x3151 && idProduct == 0x4010) ||  // 別のDOIO製品ID
+        (productName.indexOf("DOIO") >= 0) ||           // 製品名にDOIOが含まれる
+        (productName.indexOf("KB16") >= 0)) {           // 製品名にKB16が含まれる
+      isDOIO = true;
+    }
+    
+    if (isDOIO) {
+      isDoioKb16 = true;
+      doioDataSize = 16; // DOIO KB16は通常16バイトレポート
+      Serial.println("*** DOIO KB16 detected! Using custom keycode mapping. ***");
+      Serial.println("  - Modified keys at byte 1 (index 1)");
+      Serial.println("  - Alphabet keys: 0x08-0x21 (A-Z)");
+      Serial.println("  - Number keys: 0x22-0x2B (1-0)");
+      Serial.println("  - Key scan range: bytes 2-15");
+    } else {
+      isDoioKb16 = false;
+      doioDataSize = 32;
+      Serial.println("Standard HID keyboard detected.");
+    }
+  }
+  
   void onKeyboardKey(uint8_t ascii, uint8_t keycode, uint8_t modifier) override {
     unsigned long currentTime = millis();
     
@@ -30,6 +144,21 @@ public:
       Serial.printf("重複キー検出（無視）: ASCII=0x%02X, Keycode=0x%02X, Time=%ums\n", 
                   ascii, keycode, currentTime - lastKeyTimes[keycode]);
       return;
+    }
+    
+    // DOIO KB16用のキーコード変換を適用
+    uint8_t convertedAscii = ascii;
+    if (isDoioKb16) {
+      bool shift = (modifier & KEYBOARD_MODIFIER_LEFTSHIFT) || (modifier & KEYBOARD_MODIFIER_RIGHTSHIFT);
+      convertedAscii = getKeycodeToAscii(keycode, shift ? 1 : 0);
+      if (convertedAscii != 0) {
+        ascii = convertedAscii;
+        Serial.printf("DOIO KB16 keycode conversion: 0x%02X -> ASCII=0x%02X (%c), shift=%s\n", 
+                     keycode, ascii, (ascii >= 32 && ascii <= 126) ? (char)ascii : '?',
+                     shift ? "true" : "false");
+      } else {
+        Serial.printf("DOIO KB16 unknown keycode: 0x%02X (no conversion)\n", keycode);
+      }
     }
     
     // このキーの処理時間を記録（次回の重複チェック用）
@@ -105,6 +234,12 @@ public:
   void onKeyboard(hid_keyboard_report_t report, hid_keyboard_report_t last_report) override {
     // 親クラスのメソッドを呼び出して、通常のログ処理を行う
     EspUsbHost::onKeyboard(report, last_report);
+    
+    // DOIO KB16専用処理（KEYBOARD_BLEプロジェクトから移植）
+    if (isDoioKb16) {
+      processDOIOKB16Report(report, last_report);
+      return; // DOIO KB16の場合は専用処理のみ実行
+    }
     
     // シフト状態の確認
     bool shift = (report.modifier & KEYBOARD_MODIFIER_LEFTSHIFT) || 
@@ -204,43 +339,34 @@ public:
         // キーボードデータ構造を解析
         hid_keyboard_report_t report = {};
         
-        // 第1バイト: 修飾キー (保存するが、常に0x06の場合は無視)
-        uint8_t rawModifier = transfer->data_buffer[0];
+        // DOIO KB16の16バイト形式では修飾キーは2バイト目（index 1）
+        uint8_t rawModifier = transfer->data_buffer[1];  // Python版に合わせて修正
         
-        // KB16は常に0x06（左Shift+左Alt）を送信するようだが、実際はそうでないので無視する
-        // 代わりに特定の修飾キーを検出する
-        if (rawModifier == 0x06) {
-          report.modifier = 0; // 修飾キーをリセット
-        } else {
-          report.modifier = rawModifier; // 異なる値なら採用
-        }
+        // 修飾キーの処理 - Python版と同じロジック
+        report.modifier = rawModifier;
+        
+        #if DEBUG_OUTPUT
+        Serial.printf("DOIO KB16 modifier byte: [1]=0x%02X (binary: %08b)\n", 
+                     rawModifier, rawModifier);
+        if (rawModifier & 0x01) Serial.print("  L-Ctrl ");
+        if (rawModifier & 0x02) Serial.print("  L-Shift ");
+        if (rawModifier & 0x04) Serial.print("  L-Alt ");
+        if (rawModifier & 0x08) Serial.print("  L-GUI ");
+        if (rawModifier & 0x10) Serial.print("  R-Ctrl ");
+        if (rawModifier & 0x20) Serial.print("  R-Shift ");
+        if (rawModifier & 0x40) Serial.print("  R-Alt ");
+        if (rawModifier & 0x80) Serial.print("  R-GUI ");
+        if (rawModifier != 0) Serial.println();
+        #endif
         
         // すべてのバイトをスキャンして非ゼロの値（キーコード）を探す
-        // 無効なキーコードを除外 (0x01, 0x02, 0x03, 0xFF, 0x40, 0x80など)
-        for (int i = 1; i < transfer->actual_num_bytes; i++) {
+        // Python版と同じく、バイト2-15をキーコード領域として使用
+        for (int i = 2; i < transfer->actual_num_bytes && i < 16; i++) {
           uint8_t keycode = transfer->data_buffer[i];
-          // 有効なキーコードの範囲をチェック (主に0x04-0x38, 一部特殊キー)
-          if (keycode >= 0x04 && keycode <= 0x65 && // 標準的なキーコード範囲
+          // 有効なキーコードの範囲をチェック - DOIO KB16の場合は0x08以上
+          if (keycode >= 0x08 && keycode <= 0x65 && 
               keycode != 0x40 && keycode != 0x80) { // よく誤検出される値を除外
             addKeyToReport(keycode, report);
-          }
-          
-          // 特殊キーの検出 (修飾キーかどうかを確認)
-          if (i >= 1 && i <= 4) { // インデックス1-4は制御バイトの可能性
-            switch (keycode) {
-              case 0x01: // Ctrlキーの可能性
-                report.modifier |= KEYBOARD_MODIFIER_LEFTCTRL;
-                break;
-              case 0x02: // Shiftキーの可能性
-                report.modifier |= KEYBOARD_MODIFIER_LEFTSHIFT;
-                break;
-              case 0x04: // Altキーの可能性 (検出済みの可能性)
-                report.modifier |= KEYBOARD_MODIFIER_LEFTALT;
-                break;
-              case 0x08: // GUIキーの可能性
-                report.modifier |= KEYBOARD_MODIFIER_LEFTGUI;
-                break;
-            }
           }
         }
         
@@ -326,6 +452,150 @@ public:
     }
   }
   
+  // DOIO KB16デバイスを有効化
+  void enableDoioKb16() {
+    isDoioKb16 = true;
+    doioDataSize = 16;  // DOIO KB16は通常16バイトレポート
+    Serial.println("DOIO KB16 mode enabled with custom keycode mapping.");
+    Serial.println("  - Alphabet keys: 0x08-0x21 (A-Z)");
+    Serial.println("  - Number keys: 0x22-0x2B (1-0)");
+    Serial.println("  - Special keys: 0x2C+ (Space, Enter, etc.)");
+  }
+  
+  // DOIO KB16専用HIDレポート処理（KEYBOARD_BLEプロジェクトから移植・改良版）
+  void processDOIOKB16Report(hid_keyboard_report_t report, hid_keyboard_report_t last_report) {
+    // DOIO KB16の特殊な値(0xAA)をチェック（動作確認済みのKEYBOARD_BLEプロジェクトと統一）
+    if (report.reserved != 0xAA) {
+      Serial.printf("DOIO KB16: 無効なレポート形式 (reserved=0x%02X)\n", report.reserved);
+      return;
+    }
+    
+    Serial.println("DOIO KB16: 有効なレポート検出（0xAA形式）");
+    
+    // キーコードフィールドからデータを取得（最初の6バイト）
+    uint8_t kb16_data[32] = {0};
+    uint8_t kb16_last_data[32] = {0};
+    
+    for (int i = 0; i < 6 && i < 32; i++) {
+      kb16_data[i] = report.keycode[i];
+      kb16_last_data[i] = last_report.keycode[i];
+    }
+    
+    // 初回レポート時は全データを表示
+    static bool first_report = true;
+    if (first_report) {
+      Serial.printf("KB16初回レポート: modifier=0x%02X, reserved=0x%02X\n", report.modifier, report.reserved);
+      for (int i = 0; i < 6; i++) {
+        Serial.printf("  keycode[%d]=0x%02X\n", i, report.keycode[i]);
+      }
+      first_report = false;
+    }
+    
+    bool key_state_changed = false;
+    
+    // 各キーマッピングをチェック
+    for (int i = 0; i < sizeof(kb16_key_map) / sizeof(KeyMapping); i++) {
+      const KeyMapping& mapping = kb16_key_map[i];
+      
+      // バイトインデックスが範囲内か確認
+      if (mapping.byte_idx < 32) {
+        uint8_t current_byte = kb16_data[mapping.byte_idx];
+        uint8_t last_byte = kb16_last_data[mapping.byte_idx];
+        
+        bool current_state = (current_byte & mapping.bit_mask) != 0;
+        bool last_state = (last_byte & mapping.bit_mask) != 0;
+        
+        // キー状態に変化があった場合
+        if (current_state != last_state) {
+          Serial.printf("DOIO KB16: キー (%d,%d) %s [バイト%d:0x%02X, ビット:0x%02X]\n", 
+                      mapping.row, mapping.col, 
+                      current_state ? "押下" : "解放",
+                      mapping.byte_idx, current_byte, mapping.bit_mask);
+          
+          // HIDキーコードに変換（Pythonアナライザーと統一、0x08スタート）
+          uint8_t hid_keycode = 0;
+          
+          // Pythonアナライザーと同じ0x08スタートのHIDキーコードマッピング
+          if (mapping.row == 0 && mapping.col == 0) hid_keycode = 0x22;      // 1キー (0x22='1')
+          else if (mapping.row == 0 && mapping.col == 1) hid_keycode = 0x23; // 2キー (0x23='2')
+          else if (mapping.row == 0 && mapping.col == 2) hid_keycode = 0x24; // 3キー (0x24='3')
+          else if (mapping.row == 0 && mapping.col == 3) hid_keycode = 0x25; // 4キー (0x25='4')
+          else if (mapping.row == 1 && mapping.col == 0) hid_keycode = 0x26; // 5キー (0x26='5')
+          else if (mapping.row == 1 && mapping.col == 1) hid_keycode = 0x27; // 6キー (0x27='6')
+          else if (mapping.row == 1 && mapping.col == 2) hid_keycode = 0x30; // 7キー (0x30='7')
+          else if (mapping.row == 1 && mapping.col == 3) hid_keycode = 0x31; // 8キー (0x31='8')
+          else if (mapping.row == 2 && mapping.col == 0) hid_keycode = 0x32; // 9キー (0x32='9')
+          else if (mapping.row == 2 && mapping.col == 1) hid_keycode = 0x33; // 0キー (0x33='0')
+          else if (mapping.row == 2 && mapping.col == 2) hid_keycode = 0x28; // Enterキー (0x28=Enter)
+          else if (mapping.row == 2 && mapping.col == 3) hid_keycode = 0x29; // Escキー (0x29=Esc)
+          else if (mapping.row == 3 && mapping.col == 0) hid_keycode = 0x2A; // Backspaceキー (0x2A=Backspace)
+          else if (mapping.row == 3 && mapping.col == 1) hid_keycode = 0x2B; // Tabキー (0x2B=Tab)
+          else if (mapping.row == 3 && mapping.col == 2) hid_keycode = 0x2C; // Spaceキー (0x2C=Space)
+          else if (mapping.row == 3 && mapping.col == 3) hid_keycode = 0x08; // Aキー (0x08='A')  // 右Altキー（Aで代用）
+          
+          if (current_state && hid_keycode != 0) { // キーが押された
+            // ディスプレイ用の文字
+            char display_char = '?';
+            if (hid_keycode >= 0x08 && hid_keycode <= 0x21) {  // A-Z (0x08-0x21)
+              display_char = 'A' + (hid_keycode - 0x08);
+            } else if (hid_keycode >= 0x22 && hid_keycode <= 0x27) {  // 1-6 (0x22-0x27)
+              display_char = '1' + (hid_keycode - 0x22);
+            } else if (hid_keycode >= 0x30 && hid_keycode <= 0x33) {  // 7-0 (0x30-0x33)
+              display_char = '7' + (hid_keycode - 0x30);
+              if (display_char > '9') display_char = '0';  // 0x33 -> '0'
+            } else if (hid_keycode == 0x2C) {  // Space
+              display_char = ' ';
+            }
+            
+            // BLEキーボードで送信（HIDキーコードを適切に変換）
+            if (bleKeyboard.isConnected()) {
+              // HIDキーコードに基づく適切な変換
+              if (hid_keycode == 0x28) {           // Enter
+                bleKeyboard.write(KEY_RETURN);
+              } else if (hid_keycode == 0x29) {    // Esc  
+                bleKeyboard.write(KEY_ESC);
+              } else if (hid_keycode == 0x2A) {    // Backspace
+                bleKeyboard.write(KEY_BACKSPACE);
+              } else if (hid_keycode == 0x2B) {    // Tab
+                bleKeyboard.write(KEY_TAB);
+              } else if (hid_keycode == 0x2C) {    // Space
+                bleKeyboard.write(' ');
+              } else if (hid_keycode >= 0x08 && hid_keycode <= 0x21) {  // A-Z (0x08-0x21)
+                char letter = 'a' + (hid_keycode - 0x08);
+                bleKeyboard.write(letter);
+              } else if (hid_keycode >= 0x22 && hid_keycode <= 0x27) {  // 1-6 (0x22-0x27)
+                char digit = '1' + (hid_keycode - 0x22);
+                bleKeyboard.write(digit);
+              } else if (hid_keycode >= 0x30 && hid_keycode <= 0x33) {  // 7-0 (0x30-0x33)
+                char digit = '7' + (hid_keycode - 0x30);
+                if (digit > '9') digit = '0';  // 0x33 -> '0'
+                bleKeyboard.write(digit);
+              } else {
+                // その他のキーコードは直接送信
+                bleKeyboard.press(hid_keycode);
+                bleKeyboard.releaseAll();
+              }
+              
+              Serial.printf("BLE送信完了: HIDキーコード=0x%02X, 文字='%c'\n", hid_keycode, display_char);
+            }
+            
+            // ディスプレイに文字を追加
+            if (display_char != '?' && display_char >= 32 && display_char <= 126) {
+              displayController.addDisplayText(display_char);
+            }
+            
+            key_state_changed = true;
+          }
+        }
+      }
+    }
+    
+    if (key_state_changed) {
+      // ディスプレイを更新
+      Serial.println("DOIO KB16: キー状態変化によりディスプレイ更新");
+    }
+  }
+
 private:
   // DOIO KB16キーボードフラグ
   bool isDoioKb16 = false;
@@ -563,6 +833,7 @@ void sendKeyToBle(uint8_t keycode, uint8_t modifier) {
   }
 }
 
+// DOIO KB16 キーマッピング構造体（KEYBOARD_BLEプロジェクトから移植）
 void setup() {
   Serial.begin(115200);
   delay(500);
@@ -581,6 +852,40 @@ void setup() {
   
   // 起動音を再生
   speakerController.playStartupMelody();
+  
+  // ===== 5秒間のプログラミングモード（書き込みモード）開始 =====
+  #if DEBUG_OUTPUT
+  Serial.println("Starting 5-second programming mode...");
+  #endif
+  
+  // プログラミングモードの表示
+  displayController.showProgrammingMode();
+  
+  // 5秒カウントダウン
+  for (int i = 5; i > 0; i--) {
+    displayController.showCountdown(i);
+    
+    // 1秒待機
+    delay(1000);
+    
+    #if DEBUG_OUTPUT
+    Serial.printf("Programming mode countdown: %d seconds remaining\n", i);
+    #endif
+  }
+  
+  #if DEBUG_OUTPUT
+  Serial.println("Programming mode finished. Starting USB Host mode...");
+  #endif
+  
+  // プログラミングモード終了の表示
+  displayController.showUsbHostModeActivated();
+  delay(1000);
+  
+  // ===== プログラミングモード終了、通常のUSBホストモード開始 =====
+  
+  // テスト用: DOIO KB16モードを強制的に有効化（実際のデバイス検出前）
+  // 実際のDOIO KB16がある場合はコメントアウト
+  // usbHost.enableDoioKb16();
   
   // BLEキーボードの初期化
   if (bleEnabled) {

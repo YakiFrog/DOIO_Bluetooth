@@ -45,6 +45,11 @@ public:
     void addDisplayText(char c);
     void clearDisplayText();
     
+    // 起動遅延モード表示関数
+    void showProgrammingMode();
+    void showCountdown(int seconds);
+    void showUsbHostModeActivated();
+    
 private:
     Adafruit_SSD1306 display = Adafruit_SSD1306(SCREEN_WIDTH, SCREEN_HEIGHT, &Wire, OLED_RESET);
     

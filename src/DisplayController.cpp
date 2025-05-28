@@ -225,3 +225,39 @@ void DisplayController::addDisplayText(char c) {
 void DisplayController::clearDisplayText() {
     displayText = "";
 }
+
+// 起動遅延モードの表示関数
+void DisplayController::showProgrammingMode() {
+    display.clearDisplay();
+    display.setTextSize(1);
+    display.setTextColor(SSD1306_WHITE);
+    
+    // "Programming Mode" を中央表示
+    display.setCursor(10, 15);
+    display.println("Programming Mode");
+    display.setCursor(20, 30);
+    display.println("USB Write Mode");
+    display.display();
+}
+
+void DisplayController::showCountdown(int seconds) {
+    // カウントダウン表示エリアをクリア
+    display.fillRect(0, 45, 128, 20, SSD1306_BLACK);
+    
+    String countText = "Start in " + String(seconds) + "s";
+    display.setCursor(30, 50);
+    display.print(countText);
+    display.display();
+}
+
+void DisplayController::showUsbHostModeActivated() {
+    display.clearDisplay();
+    display.setTextSize(1);
+    display.setTextColor(SSD1306_WHITE);
+    
+    display.setCursor(20, 20);
+    display.println("USB Host Mode");
+    display.setCursor(25, 35);
+    display.println("Activated");
+    display.display();
+}
