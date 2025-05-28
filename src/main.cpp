@@ -4,6 +4,7 @@
 #include <BleKeyboard.h>
 #include "DisplayController.h"
 #include "Peripherals.h"
+#include "kb16_hid_report_analyzer.h"  // HIDレポートアナライザー追加
 
 // DOIO KB16 キーマッピング構造体（KEYBOARD_BLEプロジェクトから移植）
 struct KeyMapping {
@@ -472,6 +473,9 @@ public:
     
     Serial.println("DOIO KB16: 有効なレポート検出（0xAA形式）");
     
+    // HIDレポートアナライザーでレポートを解析（0x09問題検出）
+    analyzeHIDReportIntegrated(report.keycode, last_report.keycode);
+    
     // キーコードフィールドからデータを取得（最初の6バイト）
     uint8_t kb16_data[32] = {0};
     uint8_t kb16_last_data[32] = {0};
@@ -899,6 +903,12 @@ void setup() {
   usbHost.begin();
   usbHost.setHIDLocal(HID_LOCAL_Japan_Katakana);
   
+  // HIDレポートアナライザーの初期化
+  initHIDReportAnalyzer();
+  #if DEBUG_OUTPUT
+  Serial.println("HID Report Analyzer initialized for 0x09 issue detection");
+  #endif
+  
   // 初期状態を表示
   displayController.updateDisplay();
   
@@ -957,4 +967,11 @@ void loop() {
   // LED更新処理
   ledController.updateKeyLED();   // キー入力LED
   ledController.updateStatusLED(); // ステータスLED
+  
+  // HIDレポートアナライザーの定期レポート（30秒ごと）
+  static unsigned long lastAnalyzerReportTime = 0;
+  if (millis() - lastAnalyzerReportTime > 30000) {
+    lastAnalyzerReportTime = millis();
+    periodicAnalyzerReport();
+  }
 }

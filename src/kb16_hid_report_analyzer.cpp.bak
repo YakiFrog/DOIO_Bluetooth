@@ -1,0 +1,509 @@
+/**
+ * @file kb16_hid_report_analyzer.cpp
+ * @brief DOIO KB16 HIDレポート解析ツール（C++版）
+ * 
+ * Python版 kb16_hid_report_analyzer.py の C++ 移植版
+ * 反応しないキーを特定し、HIDレポート形式を解析するためのツール
+ * 
+ * 使用方法:
+ * 1. このファイルを main.cpp と置き換えてビルド
+ * 2. シリアルモニターでキーの押下状況を確認
+ * 3. 反応しないキーがあれば、位置とHIDコードをログに記録
+ * 
+ * @version 1.0.0
+ * @date 2025-01-28
+ * @author 
+ */
+
+#include <Arduino.h>
+#include <BLEDevice.h>
+#include <BLEHIDDevice.h>
+#include <BLEServer.h>
+#include <BLEUtils.h>
+#include <BLE2902.h>
+#include <string>
+#include <vector>
+#include <map>
+
+// DOIO KB16キーボード設定
+const char* DEVICE_MANUFACTURER = "DOIO";
+const char* DEVICE_MODEL = "KB16";
+const uint16_t DOIO_VID = 0xD010;  // USB_VID -> DOIO_VID (マクロ衝突回避)
+const uint16_t DOIO_PID = 0x1601;  // USB_PID -> DOIO_PID (マクロ衝突回避)
+
+// HIDレポート設定
+const uint8_t HID_REPORT_SIZE = 16;  // DOIO KB16は16バイトレポート
+const uint8_t MODIFIER_INDEX = 1;    // 修飾キーのバイト位置
+const uint8_t KEY_START_INDEX = 2;   // キーコード開始位置
+
+// ログ設定
+const bool ENABLE_DETAILED_LOG = true;
+const bool ENABLE_MATRIX_DISPLAY = true;
+const unsigned long LOG_INTERVAL_MS = 100;  // ログ出力間隔
+
+/**
+ * @brief キーボード物理位置（4x4マトリックス）
+ */
+struct KeyPosition {
+    uint8_t row;
+    uint8_t col;
+    const char* label;
+};
+
+/**
+ * @brief DOIO KB16 キーマッピング（物理位置 -> HIDコード）
+ * Python版の keycode_table に対応
+ */
+const std::map<uint8_t, KeyPosition> DOIO_KB16_KEYMAP = {
+    // 注意: 実際のキーボードレイアウトに合わせて調整が必要
+    // 現在は仮のマッピング
+    {0x08, {0, 0, "Key_00_A"}},  // 0x09 -> 0x08 への変換対応
+    {0x09, {0, 1, "Key_01_B"}},
+    {0x0A, {0, 2, "Key_02_C"}},
+    {0x0B, {0, 3, "Key_03_D"}},
+    {0x0C, {1, 0, "Key_10_E"}},
+    {0x0D, {1, 1, "Key_11_F"}},
+    {0x0E, {1, 2, "Key_12_G"}},
+    {0x0F, {1, 3, "Key_13_H"}},
+    {0x10, {2, 0, "Key_20_I"}},
+    {0x11, {2, 1, "Key_21_J"}},
+    {0x12, {2, 2, "Key_22_K"}},
+    {0x13, {2, 3, "Key_23_L"}},
+    {0x14, {3, 0, "Key_30_M"}},
+    {0x15, {3, 1, "Key_31_N"}},
+    {0x16, {3, 2, "Key_32_O"}},
+    {0x17, {3, 3, "Key_33_P"}},
+};
+
+/**
+ * @brief HIDキーコードを文字列に変換
+ * Python版の keycode_to_string() に対応
+ */
+String hidKeycodeToString(uint8_t keycode, bool shift = false) {
+    // アルファベット (0x08-0x21: A-Z) - DOIO KB16カスタムマッピング
+    if (keycode >= 0x08 && keycode <= 0x21) {
+        char base = 'A' + (keycode - 0x08);
+        return String(shift ? base : (base + 32));  // 大文字/小文字切り替え
+    }
+    
+    // 数字と記号
+    switch (keycode) {
+        case 0x22: return shift ? "!" : "1";
+        case 0x23: return shift ? "@" : "2";
+        case 0x24: return shift ? "#" : "3";
+        case 0x25: return shift ? "$" : "4";
+        case 0x26: return shift ? "%" : "5";
+        case 0x27: return shift ? "^" : "6";
+        case 0x30: return shift ? "&" : "7";  // 0x28 -> 0x30 (重複回避)
+        case 0x31: return shift ? "*" : "8";  // 0x29 -> 0x31 (重複回避)
+        case 0x32: return shift ? "(" : "9";  // 0x2A -> 0x32 (重複回避)
+        case 0x33: return shift ? ")" : "0";  // 0x2B -> 0x33 (重複回避)
+        
+        // 特殊キー
+        case 0x28: return "Enter";
+        case 0x29: return "Esc";
+        case 0x2A: return "Backspace";
+        case 0x2B: return "Tab";
+        case 0x2C: return "Space";
+        case 0x2D: return shift ? "_" : "-";
+        case 0x2E: return shift ? "+" : "=";
+        
+        // ファンクションキー
+        case 0x3A: return "F1";
+        case 0x3B: return "F2";
+        case 0x3C: return "F3";
+        case 0x3D: return "F4";
+        
+        // 制御キー
+        case 0xE0: return "L-Ctrl";
+        case 0xE1: return "L-Shift";
+        case 0xE2: return "L-Alt";
+        case 0xE3: return "L-GUI";
+        case 0xE4: return "R-Ctrl";
+        case 0xE5: return "R-Shift";
+        case 0xE6: return "R-Alt";
+        case 0xE7: return "R-GUI";
+        
+        default:
+            return "Unknown(0x" + String(keycode, HEX) + ")";
+    }
+}
+
+/**
+ * @brief HIDレポート解析クラス
+ * Python版の KB16HIDReportAnalyzer に対応
+ */
+class KB16HIDReportAnalyzer {
+private:
+    uint8_t lastReport[HID_REPORT_SIZE];
+    bool hasLastReport;
+    unsigned long lastLogTime;
+    uint32_t reportCount;
+    
+    // 統計情報
+    std::map<uint8_t, uint32_t> keycodeFrequency;  // キーコードの出現回数
+    std::vector<uint8_t> unresponsiveKeys;         // 反応しないキー一覧
+    
+public:
+    KB16HIDReportAnalyzer() : hasLastReport(false), lastLogTime(0), reportCount(0) {
+        memset(lastReport, 0, sizeof(lastReport));
+    }
+    
+    /**
+     * @brief HIDレポートを解析して表示
+     * Python版の pretty_print_report() に対応
+     */
+    void analyzeReport(const uint8_t* report) {
+        reportCount++;
+        
+        // 基本情報の表示
+        Serial.println();
+        Serial.println("=== HIDレポート解析 ===");
+        Serial.printf("レポート番号: %u\n", reportCount);
+        Serial.printf("時刻: %lu ms\n", millis());
+        
+        // バイト列を16進数で表示
+        Serial.print("RAWデータ [16バイト]: ");
+        for (int i = 0; i < HID_REPORT_SIZE; i++) {
+            Serial.printf("%02X ", report[i]);
+        }
+        Serial.println();
+        
+        // バイト別詳細分析
+        if (ENABLE_DETAILED_LOG) {
+            Serial.println("バイト別分析:");
+            Serial.printf("  バイト0 (0x%02X): レポートID/特殊フラグ (値=%u)\n", 
+                         report[0], report[0]);
+            Serial.printf("  バイト1 (0x%02X): 修飾キー候補 (2進: %s)\n", 
+                         report[1], String(report[1], BIN).c_str());
+            
+            for (int i = 2; i < HID_REPORT_SIZE; i++) {
+                if (report[i] != 0) {
+                    Serial.printf("  バイト%d (0x%02X): キーコード (値=%u)\n", 
+                                 i, report[i], report[i]);
+                }
+            }
+        }
+        
+        // 修飾キー解析
+        analyzeModifierKeys(report[MODIFIER_INDEX]);
+        
+        // 押されているキー解析
+        analyzePressedKeys(report);
+        
+        // 変更点検出
+        if (hasLastReport) {
+            analyzeChanges(lastReport, report);
+        }
+        
+        // キーマトリックス表示
+        if (ENABLE_MATRIX_DISPLAY) {
+            displayKeyMatrix(report);
+        }
+        
+        // 統計情報更新
+        updateStatistics(report);
+        
+        // レポートを保存
+        memcpy(lastReport, report, HID_REPORT_SIZE);
+        hasLastReport = true;
+        lastLogTime = millis();
+        
+        Serial.println("========================");
+    }
+    
+    /**
+     * @brief 修飾キー解析
+     */
+    void analyzeModifierKeys(uint8_t modifier) {
+        Serial.println("修飾キー解析:");
+        Serial.printf("  修飾キーバイト: 0x%02X (2進: %s)\n", 
+                     modifier, String(modifier, BIN).c_str());
+        
+        String modStr = "";
+        bool shiftPressed = false;
+        
+        if (modifier & 0x01) modStr += "L-Ctrl ";
+        if (modifier & 0x02) { modStr += "L-Shift "; shiftPressed = true; }
+        if (modifier & 0x04) modStr += "L-Alt ";
+        if (modifier & 0x08) modStr += "L-GUI ";
+        if (modifier & 0x10) modStr += "R-Ctrl ";
+        if (modifier & 0x20) { modStr += "R-Shift "; shiftPressed = true; }
+        if (modifier & 0x40) modStr += "R-Alt ";
+        if (modifier & 0x80) modStr += "R-GUI ";
+        
+        Serial.printf("  検出された修飾キー: %s\n", 
+                     modStr.length() > 0 ? modStr.c_str() : "なし");
+    }
+    
+    /**
+     * @brief 押されているキー解析
+     */
+    void analyzePressedKeys(const uint8_t* report) {
+        Serial.println("押されているキー:");
+        
+        std::vector<String> pressedKeys;
+        std::vector<String> pressedChars;
+        bool shiftPressed = (report[MODIFIER_INDEX] & 0x22) != 0;  // L-Shift or R-Shift
+        
+        // キーコード領域をスキャン
+        for (int i = KEY_START_INDEX; i < HID_REPORT_SIZE; i++) {
+            if (report[i] != 0) {
+                uint8_t keycode = report[i];
+                
+                // キーコードを記録
+                pressedKeys.push_back("0x" + String(keycode, HEX));
+                
+                // 文字表現を取得
+                String keyStr = hidKeycodeToString(keycode, shiftPressed);
+                pressedChars.push_back(keyStr);
+                
+                // キーマップでの位置確認
+                auto it = DOIO_KB16_KEYMAP.find(keycode);
+                if (it != DOIO_KB16_KEYMAP.end()) {
+                    Serial.printf("  キーコード 0x%02X -> 位置(%u,%u) [%s] = '%s'\n",
+                                 keycode, it->second.row, it->second.col, 
+                                 it->second.label, keyStr.c_str());
+                } else {
+                    Serial.printf("  キーコード 0x%02X -> 未知の位置 = '%s' [要マッピング追加]\n",
+                                 keycode, keyStr.c_str());
+                }
+            }
+        }
+        
+        if (pressedKeys.empty()) {
+            Serial.println("  なし");
+        } else {
+            Serial.print("  キーコード: ");
+            for (size_t i = 0; i < pressedKeys.size(); i++) {
+                Serial.print(pressedKeys[i]);
+                if (i < pressedKeys.size() - 1) Serial.print(", ");
+            }
+            Serial.println();
+            
+            Serial.print("  文字表現: ");
+            for (size_t i = 0; i < pressedChars.size(); i++) {
+                Serial.print(pressedChars[i]);
+                if (i < pressedChars.size() - 1) Serial.print(", ");
+            }
+            Serial.println();
+        }
+    }
+    
+    /**
+     * @brief 変更点解析
+     */
+    void analyzeChanges(const uint8_t* oldReport, const uint8_t* newReport) {
+        Serial.println("変更点:");
+        
+        bool hasChanges = false;
+        for (int i = 0; i < HID_REPORT_SIZE; i++) {
+            if (oldReport[i] != newReport[i]) {
+                Serial.printf("  バイト%d: 0x%02X -> 0x%02X\n", 
+                             i, oldReport[i], newReport[i]);
+                hasChanges = true;
+            }
+        }
+        
+        if (!hasChanges) {
+            Serial.println("  変更なし");
+        }
+    }
+    
+    /**
+     * @brief 4x4キーマトリックス表示
+     */
+    void displayKeyMatrix(const uint8_t* report) {
+        Serial.println("キーマトリックス (4x4):");
+        Serial.println("  +---+---+---+---+");
+        
+        bool matrix[4][4] = {false};  // 4x4マトリックス
+        
+        // 押されているキーをマトリックスにマッピング
+        for (int i = KEY_START_INDEX; i < HID_REPORT_SIZE; i++) {
+            if (report[i] != 0) {
+                auto it = DOIO_KB16_KEYMAP.find(report[i]);
+                if (it != DOIO_KB16_KEYMAP.end()) {
+                    uint8_t row = it->second.row;
+                    uint8_t col = it->second.col;
+                    if (row < 4 && col < 4) {
+                        matrix[row][col] = true;
+                    }
+                }
+            }
+        }
+        
+        // マトリックス表示
+        for (int row = 0; row < 4; row++) {
+            Serial.print("  |");
+            for (int col = 0; col < 4; col++) {
+                Serial.print(matrix[row][col] ? " ● " : "   ");
+                Serial.print("|");
+            }
+            Serial.println();
+            Serial.println("  +---+---+---+---+");
+        }
+    }
+    
+    /**
+     * @brief 統計情報更新
+     */
+    void updateStatistics(const uint8_t* report) {
+        // キーコード出現頻度を更新
+        for (int i = KEY_START_INDEX; i < HID_REPORT_SIZE; i++) {
+            if (report[i] != 0) {
+                keycodeFrequency[report[i]]++;
+            }
+        }
+    }
+    
+    /**
+     * @brief 統計情報表示
+     */
+    void printStatistics() {
+        Serial.println();
+        Serial.println("=== 統計情報 ===");
+        Serial.printf("総レポート数: %u\n", reportCount);
+        Serial.printf("検出されたキーコード種類: %u\n", keycodeFrequency.size());
+        
+        Serial.println("キーコード出現頻度:");
+        for (const auto& pair : keycodeFrequency) {
+            uint8_t keycode = pair.first;
+            uint32_t count = pair.second;
+            String keyStr = hidKeycodeToString(keycode);
+            Serial.printf("  0x%02X (%s): %u回\n", keycode, keyStr.c_str(), count);
+        }
+        
+        // 反応しないキーの特定（期待されるキーコードの範囲で出現しないもの）
+        Serial.println("反応チェック結果:");
+        std::vector<uint8_t> expectedKeys;
+        for (const auto& pair : DOIO_KB16_KEYMAP) {
+            expectedKeys.push_back(pair.first);
+        }
+        
+        for (uint8_t expectedKey : expectedKeys) {
+            if (keycodeFrequency.find(expectedKey) == keycodeFrequency.end()) {
+                auto it = DOIO_KB16_KEYMAP.find(expectedKey);
+                Serial.printf("  ⚠️  未反応キー: 0x%02X 位置(%u,%u) [%s]\n",
+                             expectedKey, it->second.row, it->second.col, it->second.label);
+            }
+        }
+        
+        Serial.println("================");
+    }
+    
+    /**
+     * @brief 問題のあるキーレポート
+     */
+    void reportProblematicKeys() {
+        Serial.println();
+        Serial.println("=== 問題レポート ===");
+        
+        // 0x09 キーコード特別チェック（修正済みの問題）
+        if (keycodeFrequency.find(0x09) != keycodeFrequency.end()) {
+            Serial.printf("✅ 0x09キーコード: %u回検出 (修正済み)\n", keycodeFrequency[0x09]);
+        } else {
+            Serial.println("⚠️  0x09キーコード: 未検出 (要確認)");
+        }
+        
+        // その他の問題のあるキー
+        Serial.println("要調査キー:");
+        for (const auto& pair : DOIO_KB16_KEYMAP) {
+            uint8_t keycode = pair.first;
+            if (keycodeFrequency.find(keycode) == keycodeFrequency.end()) {
+                Serial.printf("  - 0x%02X 位置(%u,%u) [%s]\n",
+                             keycode, pair.second.row, pair.second.col, pair.second.label);
+            }
+        }
+        
+        Serial.println("==================");
+    }
+};
+
+// グローバル変数
+KB16HIDReportAnalyzer analyzer;
+BLEHIDDevice* hidDevice = nullptr;
+BLECharacteristic* reportCharacteristic = nullptr;
+
+/**
+ * @brief セットアップ
+ */
+void setup() {
+    Serial.begin(115200);
+    while (!Serial) {
+        delay(100);
+    }
+    
+    Serial.println();
+    Serial.println("========================================");
+    Serial.println("DOIO KB16 HIDレポート解析ツール (C++版)");
+    Serial.println("Python版 kb16_hid_report_analyzer.py 移植");
+    Serial.println("========================================");
+    Serial.printf("デバイス: %s %s\n", DEVICE_MANUFACTURER, DEVICE_MODEL);
+    Serial.printf("VID:PID = 0x%04X:0x%04X\n", DOIO_VID, DOIO_PID);
+    Serial.printf("HIDレポートサイズ: %dバイト\n", HID_REPORT_SIZE);
+    Serial.println();
+    
+    // BLE初期化
+    Serial.println("BLE初期化中...");
+    BLEDevice::init(DEVICE_MODEL);
+    
+    Serial.println("準備完了");
+    Serial.println("キーを押下してHIDレポートを生成してください");
+    Serial.println("統計情報は定期的に表示されます");
+    Serial.println("----------------------------------------");
+}
+
+/**
+ * @brief メインループ
+ */
+void loop() {
+    // 模擬HIDレポートデータ生成（実際のキーボードからの入力をシミュレート）
+    // 実際の使用では、ここでBLEやUSBからのHIDレポートを受信する
+    
+    static unsigned long lastTime = 0;
+    static uint8_t testKeycode = 0x08;  // テスト用キーコード
+    
+    if (millis() - lastTime > 2000) {  // 2秒ごとにテストレポートを生成
+        uint8_t testReport[HID_REPORT_SIZE] = {0};
+        
+        // テスト用のHIDレポートを生成
+        testReport[0] = 0x01;  // レポートID
+        testReport[1] = 0x00;  // 修飾キーなし
+        testReport[2] = testKeycode;  // テストキーコード
+        
+        Serial.printf("テストレポート生成: キーコード 0x%02X\n", testKeycode);
+        analyzer.analyzeReport(testReport);
+        
+        // 次のキーコードに進む
+        testKeycode++;
+        if (testKeycode > 0x17) {  // 0x08-0x17 の範囲でテスト
+            testKeycode = 0x08;
+            
+            // 統計情報を表示
+            analyzer.printStatistics();
+            analyzer.reportProblematicKeys();
+        }
+        
+        lastTime = millis();
+    }
+    
+    delay(100);
+}
+
+/**
+ * @brief 実際のHIDレポート処理関数
+ * 実際のキーボード入力処理時に呼び出される
+ */
+void processDOIOKB16Report(const uint8_t* report, const uint8_t* lastReport) {
+    // 実際のレポート処理
+    analyzer.analyzeReport(report);
+    
+    // 定期的に統計表示
+    static unsigned long lastStatsTime = 0;
+    if (millis() - lastStatsTime > 30000) {  // 30秒ごと
+        analyzer.printStatistics();
+        analyzer.reportProblematicKeys();
+        lastStatsTime = millis();
+    }
+}
