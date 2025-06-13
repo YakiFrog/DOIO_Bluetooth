@@ -101,7 +101,7 @@ public:
     }
   }
   
-  // デバイス接続時にDOIO KB16を検出
+  // デバイス接続時にDOIO KB16として固定認識
   void onDeviceConnected() override {
     // 親クラスの処理を呼び出す
     EspUsbHost::onDeviceConnected();
@@ -111,29 +111,15 @@ public:
     Serial.printf("Manufacturer: %s\n", manufacturer.c_str());
     Serial.printf("Product: %s\n", productName.c_str());
     
-    // VID/PIDでDOIO KB16を識別
-    // 複数のVID/PIDパターンをチェック
-    bool isDOIO = false;
-    if ((idVendor == 0xD010 && idProduct == 0x1601) ||  // 標準DOIO KB16
-        (idVendor == 0x3151 && idProduct == 0x4010) ||  // 別のDOIO製品ID
-        (productName.indexOf("DOIO") >= 0) ||           // 製品名にDOIOが含まれる
-        (productName.indexOf("KB16") >= 0)) {           // 製品名にKB16が含まれる
-      isDOIO = true;
-    }
-    
-    if (isDOIO) {
-      isDoioKb16 = true;
-      doioDataSize = 16; // DOIO KB16は通常16バイトレポート
-      Serial.println("*** DOIO KB16 detected! Using custom keycode mapping. ***");
-      Serial.println("  - Modified keys at byte 1 (index 1)");
-      Serial.println("  - Alphabet keys: 0x08-0x21 (A-Z)");
-      Serial.println("  - Number keys: 0x22-0x2B (1-0)");
-      Serial.println("  - Key scan range: bytes 2-15");
-    } else {
-      isDoioKb16 = false;
-      doioDataSize = 32;
-      Serial.println("Standard HID keyboard detected.");
-    }
+    // 全てのキーボードをDOIO KB16として固定認識
+    isDoioKb16 = true;
+    doioDataSize = 16; // 16バイト固定
+    Serial.println("*** Forced DOIO KB16 mode! Using custom keycode mapping. ***");
+    Serial.println("  - Fixed 16-byte report size");
+    Serial.println("  - Modified keys at byte 1 (index 1)");
+    Serial.println("  - Alphabet keys: 0x08-0x21 (A-Z)");
+    Serial.println("  - Number keys: 0x22-0x2B (1-0)");
+    Serial.println("  - Key scan range: bytes 2-15");
   }
   
   void onKeyboardKey(uint8_t ascii, uint8_t keycode, uint8_t modifier) override {
@@ -511,15 +497,22 @@ public:
         
         // キー状態に変化があった場合
         if (current_state != last_state) {
-          Serial.printf("DOIO KB16: キー (%d,%d) %s [バイト%d:0x%02X, ビット:0x%02X]\n", 
+          Serial.printf("DOIO KB16: キー (%d,%d) %s [バイト%d:0x%02X, ビット:0x%02X] -> 生値:0x%02X\n", 
                       mapping.row, mapping.col, 
                       current_state ? "押下" : "解放",
-                      mapping.byte_idx, current_byte, mapping.bit_mask);
+                      mapping.byte_idx, current_byte, mapping.bit_mask, current_byte);
+          
+          // デバッグ: どのビットが立っているかを詳細表示
+          if (current_state) {
+            Serial.printf("  ビット詳細: byte[%d]=0x%02X, bit_mask=0x%02X, result=%s\n",
+                         mapping.byte_idx, current_byte, mapping.bit_mask,
+                         (current_byte & mapping.bit_mask) ? "ON" : "OFF");
+          }
           
           // HIDキーコードに変換（Pythonアナライザーと統一、0x08スタート）
           uint8_t hid_keycode = 0;
           
-          // Pythonアナライザーと同じ0x08スタートのHIDキーコードマッピング
+          // 修正されたHIDキーコードマッピング（ユーザーの実際のキー配置に合わせて調整）
           if (mapping.row == 0 && mapping.col == 0) hid_keycode = 0x22;      // 1キー (0x22='1')
           else if (mapping.row == 0 && mapping.col == 1) hid_keycode = 0x23; // 2キー (0x23='2')
           else if (mapping.row == 0 && mapping.col == 2) hid_keycode = 0x24; // 3キー (0x24='3')
@@ -533,9 +526,9 @@ public:
           else if (mapping.row == 2 && mapping.col == 2) hid_keycode = 0x28; // Enterキー (0x28=Enter)
           else if (mapping.row == 2 && mapping.col == 3) hid_keycode = 0x29; // Escキー (0x29=Esc)
           else if (mapping.row == 3 && mapping.col == 0) hid_keycode = 0x2A; // Backspaceキー (0x2A=Backspace)
-          else if (mapping.row == 3 && mapping.col == 1) hid_keycode = 0x2B; // Tabキー (0x2B=Tab)
+          else if (mapping.row == 3 && mapping.col == 1) hid_keycode = 0x08; // Aキー (0x08='A') - 修正: ユーザーが実際に押しているキー
           else if (mapping.row == 3 && mapping.col == 2) hid_keycode = 0x2C; // Spaceキー (0x2C=Space)
-          else if (mapping.row == 3 && mapping.col == 3) hid_keycode = 0x08; // Aキー (0x08='A')  // 右Altキー（Aで代用）
+          else if (mapping.row == 3 && mapping.col == 3) hid_keycode = 0x2B; // Tabキー (0x2B=Tab) - 修正: 位置を交換
           
           if (current_state && hid_keycode != 0) { // キーが押された
             // ディスプレイ用の文字
@@ -601,10 +594,10 @@ public:
   }
 
 private:
-  // DOIO KB16キーボードフラグ
-  bool isDoioKb16 = false;
-  // DOIO KB16のデータサイズ（32バイトまたは6バイト）
-  uint8_t doioDataSize = 32;
+  // DOIO KB16キーボードフラグ（常にtrueに固定）
+  bool isDoioKb16 = true;
+  // DOIO KB16のデータサイズ（16バイト固定）
+  uint8_t doioDataSize = 16;
 };
 
 MyEspUsbHost usbHost;
